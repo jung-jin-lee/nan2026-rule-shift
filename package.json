@@ -1,0 +1,10 @@
+{
+  "name": "nan2026-rule-shift",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RULESHIFT — a 60 second rule-shifting browser arcade for NAN 2026",
+  "scripts": {
+    "start": "python3 -m http.server 4173",
+    "check": "node --check game.js"
+  }
+}
