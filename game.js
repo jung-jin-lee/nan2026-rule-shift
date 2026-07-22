@@ -16,9 +16,7 @@ const ruleCopy = $("ruleCopy");
 const ruleProgress = $("ruleProgress");
 const ruleStrip = $("ruleStrip");
 const toast = $("toast");
-const systemText = $("systemText");
 const overlay = $("gameOverlay");
-const overlayKicker = $("overlayKicker");
 const overlayTitle = $("overlayTitle");
 const overlayCopy = $("overlayCopy");
 const startButton = $("startButton");
@@ -205,7 +203,6 @@ function drawRule(rule) {
   ruleCopy.textContent = rule.copy;
   ruleStrip.style.borderColor = `${rule.color}66`;
   ruleStrip.style.background = `linear-gradient(90deg, ${rule.accent}, rgba(215,255,82,.025))`;
-  systemText.textContent = "RULE SHIFT DETECTED";
   showToast(`${rule.title}  /  ${rule.copy}`);
   burst(state.player.x, state.player.y, rule.color, 22);
   playSound("shift");
@@ -256,25 +253,19 @@ function setMode(mode) {
   pauseButton.innerHTML = isPaused ? "RESUME <span>▶</span>" : "PAUSE <span>Ⅱ</span>";
   touchDash.disabled = mode !== "playing" || state.dashCooldown > 0;
   if (isReady) {
-    overlayKicker.textContent = "STUDIO 07 / LIVE SYSTEM";
     overlayTitle.textContent = "RULESHIFT";
     overlayCopy.innerHTML = "룰은 예고 없이 바뀐다.<br />당신은 얼마나 빨리 적응할 수 있나?";
     startButton.innerHTML = "<span>START RUN</span><b>↗</b>";
-    systemText.textContent = "READY TO SHIFT";
   } else if (isPaused) {
-    overlayKicker.textContent = "RUN PAUSED / STUDIO 07";
     overlayTitle.textContent = "HOLD THE LINE";
     overlayCopy.innerHTML = "잠깐 멈췄다.<br />다시 움직이면 룰은 계속된다.";
     startButton.innerHTML = "<span>RESUME RUN</span><b>↗</b>";
-    systemText.textContent = "RUN PAUSED";
   } else if (mode === "over") {
     const finalScore = Math.floor(state.score);
     const rank = finalScore >= 1800 ? "S" : finalScore >= 1200 ? "A" : finalScore >= 700 ? "B" : finalScore >= 300 ? "C" : "D";
-    overlayKicker.textContent = "RUN COMPLETE / STUDIO 07";
     overlayTitle.textContent = `SHIFT RANK ${rank}`;
     overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> · BEST ${String(state.bestScore).padStart(6, "0")}<br />다음 판에서는 더 높은 랭크에 도전하라.`;
     startButton.innerHTML = "<span>RUN IT BACK</span><b>↗</b>";
-    systemText.textContent = "RUN COMPLETE";
   }
   updateHud();
 }
@@ -586,8 +577,6 @@ function drawCanvasLabels() {
   ctx.save();
   ctx.fillStyle = "rgba(241,240,232,.52)";
   ctx.font = "10px 'DM Mono', monospace";
-  ctx.fillText("LIVE / 08", arena.x + 17, arena.y + 28);
-  ctx.fillText("NO PATTERN DETECTED", arena.x + arena.w - 141, arena.y + 28);
   if (state.mode === "playing" && state.nextRuleAt - state.elapsed < 2) {
     ctx.fillStyle = state.rule?.color || "#d7ff52";
     ctx.fillText("SHIFT IMMINENT", W / 2 - 44, arena.y + arena.h - 17);
