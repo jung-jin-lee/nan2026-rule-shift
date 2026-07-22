@@ -37,12 +37,16 @@ const touchDirectionButtons = [...document.querySelectorAll("[data-key]")];
 
 const RUN_DURATION = 60;
 const RULE_DURATION = 8;
+const MAX_SIMULATION_STEP = .04;
+const RUN_DURATION_EPSILON = 1e-7;
 const DASH_COOLDOWN = 1.1;
 const BLOOM_ORB_BONUS_CAP = 3;
 const PROGRESS_STORAGE_KEY = "ruleshift:stage-progress";
 const BEST_STORAGE_KEY = "ruleshift:best";
 const PROGRESS_STORAGE_LOCK = "ruleshift:progress-storage";
 const MAX_STORED_SCORE = 9_999_999;
+// Kept only to validate progress written before the target-score rebalance.
+const LEGACY_UNLOCK_TARGETS = [900, 1400, 2000, 2800];
 
 function readStorage(key, fallback) {
   try { return localStorage.getItem(key) ?? fallback; }
@@ -107,6 +111,12 @@ function playSound(name) {
     tone(330, .12, "triangle", .03);
     tone(440, .16, "triangle", .03, .1);
     tone(660, .22, "triangle", .03, .2);
+  } else if (name === "targetLocked") {
+    tone(660, .09, "triangle", .04);
+    tone(880, .14, "triangle", .04, .07);
+  } else if (name === "targetLost") {
+    tone(190, .13, "sawtooth", .035);
+    tone(130, .16, "sawtooth", .025, .06);
   }
 }
 
@@ -122,10 +132,10 @@ const RULES = [
 ];
 
 const STAGES = [
-  { name: "SYNC", cue: "LEARN THE SIGNAL", scoreMultiplier: 1, enemyCount: 4, enemySpeed: .82, hitPenalty: 60, orbCount: 12, targetScore: 900, color: "#77e5ff" },
-  { name: "PRESSURE", cue: "KEEP YOUR LINE", scoreMultiplier: 1.25, enemyCount: 5, enemySpeed: 1, hitPenalty: 80, orbCount: 10, targetScore: 1400, color: "#d7ff52" },
-  { name: "OVERLOAD", cue: "MAKE EVERY ORB COUNT", scoreMultiplier: 1.55, enemyCount: 6, enemySpeed: 1.16, hitPenalty: 105, orbCount: 8, targetScore: 2000, color: "#ffb36b" },
-  { name: "BREAKPOINT", cue: "HOLD THE IMPOSSIBLE", scoreMultiplier: 2, enemyCount: 7, enemySpeed: 1.32, hitPenalty: 130, orbCount: 6, targetScore: 2800, color: "#ff7653" },
+  { name: "SYNC", cue: "DIRECT PURSUIT", scoreMultiplier: 1, enemyCount: 4, enemySpeed: .82, hitPenalty: 60, orbCount: 12, targetScore: 2200, color: "#77e5ff", ai: { level: 1, lead: 0, formation: 0, separation: .18, turning: 2.5, orbitBias: .34, roles: ["hunter"] } },
+  { name: "PRESSURE", cue: "PATH PREDICTION", scoreMultiplier: 1.25, enemyCount: 5, enemySpeed: 1, hitPenalty: 80, orbCount: 10, targetScore: 3800, color: "#d7ff52", ai: { level: 2, lead: .42, formation: .16, separation: .32, turning: 3.1, orbitBias: .42, roles: ["hunter", "hunter", "interceptor"] } },
+  { name: "OVERLOAD", cue: "PINCER FORMATION", scoreMultiplier: 1.55, enemyCount: 6, enemySpeed: 1.16, hitPenalty: 105, orbCount: 8, targetScore: 6200, color: "#ffb36b", ai: { level: 3, lead: .48, formation: .76, separation: .58, turning: 3.8, orbitBias: .5, roles: ["hunter", "interceptor", "flanker"] } },
+  { name: "BREAKPOINT", cue: "ADAPTIVE HUNT", scoreMultiplier: 2, enemyCount: 7, enemySpeed: 1.32, hitPenalty: 130, orbCount: 6, targetScore: 9000, color: "#ff7653", ai: { level: 4, lead: .52, formation: .95, separation: .76, turning: 4.35, orbitBias: .58, roles: ["hunter", "interceptor", "flanker", "warden", "cutoff"] } },
 ];
 
 function storedScore(value) {
@@ -151,14 +161,16 @@ function readProgress() {
     const stageBest = Array.isArray(parsed.stageBest)
       ? STAGES.map((_, index) => storedScore(parsed.stageBest[index]))
       : fallback.stageBest;
-    let verifiedUnlockedStage = 0;
-    while (
-      verifiedUnlockedStage < STAGES.length - 1
-      && stageBest[verifiedUnlockedStage] >= STAGES[verifiedUnlockedStage].targetScore
-    ) {
-      verifiedUnlockedStage += 1;
+    let verifiedCurrentUnlock = 0;
+    while (verifiedCurrentUnlock < STAGES.length - 1 && stageBest[verifiedCurrentUnlock] >= STAGES[verifiedCurrentUnlock].targetScore) {
+      verifiedCurrentUnlock += 1;
     }
-    return { unlockedStage: Math.min(requestedUnlockedStage, verifiedUnlockedStage), stageBest };
+    let verifiedLegacyUnlock = 0;
+    while (verifiedLegacyUnlock < requestedUnlockedStage && stageBest[verifiedLegacyUnlock] >= LEGACY_UNLOCK_TARGETS[verifiedLegacyUnlock]) {
+      verifiedLegacyUnlock += 1;
+    }
+    // Preserve old unlocks only when their old score chain proves them; a bare/zero forged index is rejected.
+    return { unlockedStage: Math.max(verifiedCurrentUnlock, verifiedLegacyUnlock), stageBest };
   } catch {
     return fallback;
   }
@@ -268,6 +280,7 @@ const state = {
   flash: 0,
   shake: 0,
   toastTimer: 0,
+  targetLocked: false,
   dashCooldown: 0,
   player: { x: W / 2, y: H / 2, r: 14, vx: 0, vy: 0, invuln: 0, trail: [] },
   orbs: [],
@@ -309,7 +322,8 @@ function createEnemy(index, spawnDelay = 0) {
     : side === 1 ? { x: arena.x + arena.w - 26, y: rand(arena.y + 40, arena.y + arena.h - 40) }
       : side === 2 ? { x: rand(arena.x + 40, arena.x + arena.w - 40), y: arena.y + 26 }
         : { x: rand(arena.x + 40, arena.x + arena.w - 40), y: arena.y + arena.h - 26 };
-  return { x: point.x, y: point.y, r: 11, vx: rand(-1, 1), vy: rand(-1, 1), phase: Math.random() * Math.PI * 2, seed: index, spawnDelay };
+  const roles = state.stage.ai.roles;
+  return { x: point.x, y: point.y, r: 11, vx: rand(-1, 1), vy: rand(-1, 1), phase: Math.random() * Math.PI * 2, seed: index, role: roles[index % roles.length], spawnDelay };
 }
 
 function stageMultiplierLabel() { return `×${state.stage.scoreMultiplier.toFixed(2)}`; }
@@ -334,7 +348,7 @@ function setRunStage(index) {
 function showStageBanner() {
   stageBannerKicker.textContent = `STAGE ${stageNumber()} / 04`;
   stageBannerTitle.textContent = state.stage.name;
-  stageBannerCopy.textContent = `TARGET ${stageTargetLabel()} · 60 SEC`;
+  stageBannerCopy.textContent = `${state.stage.cue} · TARGET ${stageTargetLabel()} · 60 SEC`;
   stageBanner.style.setProperty("--stage-color", state.stage.color);
   stageBanner.classList.add("is-visible");
   state.stageBannerTimer = 1.7;
@@ -346,7 +360,8 @@ function renderStageSelector(announce = false) {
     const stage = STAGES[index];
     const unlocked = isStageUnlocked(index);
     const selected = index === state.selectedStageIndex;
-    const cleared = state.progress.stageBest[index] >= stage.targetScore;
+    // A later unlocked stage proves this card cleared under its valid legacy/current target.
+    const cleared = index < state.progress.unlockedStage || state.progress.stageBest[index] >= stage.targetScore;
     option.disabled = !unlocked;
     option.setAttribute("aria-disabled", String(!unlocked));
     option.setAttribute("aria-pressed", String(unlocked && selected));
@@ -388,6 +403,7 @@ function resetWorld() {
   state.flash = 0;
   state.shake = 0;
   state.toastTimer = 0;
+  state.targetLocked = false;
   state.dashCooldown = 0;
   state.player = { x: W / 2, y: H / 2, r: 14, vx: 0, vy: 0, invuln: 0, trail: [] };
   state.orbs = Array.from({ length: state.stage.orbCount }, createOrb);
@@ -430,6 +446,8 @@ function updateHud() {
   stageValue.textContent = stageNumber();
   stageMeta.textContent = `${state.stage.name} · ${stageMultiplierLabel()} · TGT ${stageTargetLabel()}`;
   comboValue.textContent = `x${state.combo}`;
+  const targetProgress = clamp(state.score / state.stage.targetScore, 0, 1);
+  scoreValue.parentElement.style.setProperty("--target-progress", String(targetProgress));
   if (state.rule) {
     const secondsLeft = Math.max(0, state.nextRuleAt - state.elapsed);
     const remaining = clamp(secondsLeft / RULE_DURATION, 0, 1);
@@ -560,6 +578,7 @@ function hitPlayer() {
   burst(state.player.x, state.player.y, "#ff7653", 18);
   addFloatingText(state.player.x, state.player.y - 24, `−${state.stage.hitPenalty}`, "#ff7653");
   playSound("hit");
+  checkTargetState();
 }
 
 function collectOrb(orb) {
@@ -575,6 +594,18 @@ function collectOrb(orb) {
     state.orbs.push(createOrb());
   }
   Object.assign(orb, createOrb());
+  checkTargetState();
+}
+
+function checkTargetState() {
+  const isLocked = state.score >= state.stage.targetScore;
+  if (isLocked === state.targetLocked) return;
+  state.targetLocked = isLocked;
+  state.flash = Math.max(state.flash, isLocked ? .8 : .48);
+  state.shake = Math.max(state.shake, isLocked ? 7 : 4);
+  showToast(isLocked ? "TARGET LOCKED  /  HOLD IT" : "TARGET LOST  /  PUSH");
+  addFloatingText(state.player.x, state.player.y - 38, isLocked ? "TARGET LOCKED" : "TARGET LOST", isLocked ? "#d7ff52" : "#ff7653");
+  playSound(isLocked ? "targetLocked" : "targetLost");
 }
 
 function addFloatingText(x, y, text, color) {
@@ -639,11 +670,149 @@ function burst(x, y, color, amount) {
   }
 }
 
+function clampArenaPoint(point, radius = 0) {
+  return {
+    x: clamp(Number.isFinite(point?.x) ? point.x : W / 2, arena.x + radius, arena.x + arena.w - radius),
+    y: clamp(Number.isFinite(point?.y) ? point.y : H / 2, arena.y + radius, arena.y + arena.h - radius),
+  };
+}
+
+function playerMotionDirection(enemy) {
+  const speed = Math.hypot(state.player.vx, state.player.vy);
+  if (Number.isFinite(speed) && speed > 8) return { x: state.player.vx / speed, y: state.player.vy / speed };
+  const dx = state.player.x - enemy.x;
+  const dy = state.player.y - enemy.y;
+  const distanceToPlayer = Math.hypot(dx, dy) || 1;
+  return { x: dx / distanceToPlayer, y: dy / distanceToPlayer };
+}
+
+function nearestPlayerOrb() {
+  return state.orbs.reduce((closest, orb) => (!closest || distance(state.player, orb) < distance(state.player, closest) ? orb : closest), null);
+}
+
+function enemyTarget(enemy) {
+  const ai = state.stage.ai;
+  const direction = playerMotionDirection(enemy);
+  const predicted = clampArenaPoint({
+    x: state.player.x + state.player.vx * ai.lead,
+    y: state.player.y + state.player.vy * ai.lead,
+  }, enemy.r);
+  const current = clampArenaPoint(state.player, enemy.r);
+  if (enemy.role === "interceptor") return predicted;
+  if (enemy.role === "flanker") {
+    const side = enemy.seed % 2 === 0 ? 1 : -1;
+    return clampArenaPoint({
+      x: predicted.x + (-direction.y * side * 112 * ai.formation),
+      y: predicted.y + (direction.x * side * 112 * ai.formation),
+    }, enemy.r);
+  }
+  if (enemy.role === "warden") {
+    const orb = nearestPlayerOrb();
+    if (orb) return clampArenaPoint(orb, enemy.r);
+    return predicted;
+  }
+  if (enemy.role === "cutoff") {
+    return clampArenaPoint({
+      x: predicted.x + direction.x * 94 * ai.formation,
+      y: predicted.y + direction.y * 94 * ai.formation,
+    }, enemy.r);
+  }
+  return ai.level === 1 ? current : clampArenaPoint({
+    x: lerp(current.x, predicted.x, .25),
+    y: lerp(current.y, predicted.y, .25),
+  }, enemy.r);
+}
+
+function separationSteering(enemy) {
+  const separation = state.stage.ai.separation;
+  let x = 0;
+  let y = 0;
+  for (const other of state.enemies) {
+    if (other === enemy || other.spawnDelay > 0) continue;
+    const dx = enemy.x - other.x;
+    const dy = enemy.y - other.y;
+    const spacing = Math.hypot(dx, dy);
+    if (spacing > 70) continue;
+    if (spacing < .001) {
+      const angle = (enemy.seed + 1) * 2.399963229728653;
+      x += Math.cos(angle) * separation;
+      y += Math.sin(angle) * separation;
+    } else {
+      const force = (1 - spacing / 70) * separation;
+      x += (dx / spacing) * force;
+      y += (dy / spacing) * force;
+    }
+  }
+  return { x, y };
+}
+
+function updateEnemy(enemy, dt) {
+  if (enemy.spawnDelay > 0) {
+    enemy.spawnDelay = Math.max(0, enemy.spawnDelay - dt);
+    return;
+  }
+  const ai = state.stage.ai;
+  const target = enemyTarget(enemy);
+  const separation = separationSteering(enemy);
+  const dx = target.x - enemy.x;
+  const dy = target.y - enemy.y;
+  const targetDistance = Math.hypot(dx, dy) || 1;
+  let desiredX = dx / targetDistance + separation.x;
+  let desiredY = dy / targetDistance + separation.y;
+  if (state.rule?.id === "orbit") {
+    const orbitCenter = clampArenaPoint({ x: lerp(W / 2, target.x, .62), y: lerp(H / 2, target.y, .62) }, enemy.r);
+    const orbitAngle = Math.atan2(enemy.y - orbitCenter.y, enemy.x - orbitCenter.x) + dt * (.6 + enemy.seed * .035) * state.stage.enemySpeed;
+    const radius = 130 + (enemy.seed % 4) * 18 + ai.formation * 30;
+    const orbitPoint = clampArenaPoint({ x: orbitCenter.x + Math.cos(orbitAngle) * radius, y: orbitCenter.y + Math.sin(orbitAngle) * radius }, enemy.r);
+    const orbitDx = orbitPoint.x - enemy.x;
+    const orbitDy = orbitPoint.y - enemy.y;
+    const orbitDistance = Math.hypot(orbitDx, orbitDy) || 1;
+    desiredX = lerp(desiredX, orbitDx / orbitDistance + separation.x, ai.orbitBias);
+    desiredY = lerp(desiredY, orbitDy / orbitDistance + separation.y, ai.orbitBias);
+  }
+  const desiredLength = Math.hypot(desiredX, desiredY) || 1;
+  const overdrive = state.rule?.id === "overdrive" ? 1.3 : 1;
+  const speedCap = 42 * state.stage.enemySpeed * overdrive;
+  const desiredSpeed = Math.min(speedCap, speedCap * clamp(.58 + targetDistance / 170, .58, 1));
+  const turn = clamp(ai.turning * dt, 0, 1);
+  enemy.vx = lerp(enemy.vx, desiredX / desiredLength * desiredSpeed, turn);
+  enemy.vy = lerp(enemy.vy, desiredY / desiredLength * desiredSpeed, turn);
+  const actualSpeed = Math.hypot(enemy.vx, enemy.vy);
+  if (!Number.isFinite(actualSpeed) || actualSpeed === 0) {
+    enemy.vx = 0;
+    enemy.vy = 0;
+  } else if (actualSpeed > speedCap) {
+    enemy.vx = enemy.vx / actualSpeed * speedCap;
+    enemy.vy = enemy.vy / actualSpeed * speedCap;
+  }
+  enemy.x = clamp(enemy.x + enemy.vx * dt, arena.x + enemy.r, arena.x + arena.w - enemy.r);
+  enemy.y = clamp(enemy.y + enemy.vy * dt, arena.y + enemy.r, arena.y + arena.h - enemy.r);
+  if (distance(state.player, enemy) < state.player.r + enemy.r + 2) hitPlayer();
+}
+
 function update(dt) {
-  const remaining = Math.max(0, RUN_DURATION - state.elapsed);
-  dt = clamp(dt, 0, remaining);
+  let remaining = clamp(dt, 0, Math.max(0, RUN_DURATION - state.elapsed));
+  while (remaining > 0 && state.mode === "playing") {
+    // Advance rule boundaries exactly, while keeping individual physics steps stable.
+    if (state.elapsed >= state.nextRuleAt) {
+      nextRule();
+      continue;
+    }
+    const untilRuleChange = Math.max(0, state.nextRuleAt - state.elapsed);
+    const step = Math.min(MAX_SIMULATION_STEP, remaining, untilRuleChange);
+    updateStep(step);
+    remaining = Math.max(0, remaining - step);
+  }
+}
+
+function updateStep(dt) {
   state.elapsed = clamp(state.elapsed + dt, 0, RUN_DURATION);
-  state.time = RUN_DURATION - state.elapsed;
+  if (RUN_DURATION - state.elapsed <= RUN_DURATION_EPSILON) {
+    state.elapsed = RUN_DURATION;
+    state.time = 0;
+  } else {
+    state.time = RUN_DURATION - state.elapsed;
+  }
   state.dashCooldown = Math.max(0, state.dashCooldown - dt);
   state.player.invuln = Math.max(0, state.player.invuln - dt);
   state.stageBannerTimer = Math.max(0, state.stageBannerTimer - dt);
@@ -652,8 +821,6 @@ function update(dt) {
   state.shake = Math.max(0, state.shake - dt * 18);
   state.toastTimer -= dt;
   if (state.toastTimer <= 0) toast.classList.remove("is-visible");
-
-  if (state.elapsed >= state.nextRuleAt) nextRule();
 
   const input = getInput();
   const speed = 220 * (state.rule?.id === "overdrive" ? 1.35 : 1) * (state.rule?.id === "gravity" ? .62 : 1);
@@ -672,33 +839,7 @@ function update(dt) {
     if (distance(state.player, orb) < state.player.r + orb.r + 2) collectOrb(orb);
   }
 
-  for (const enemy of state.enemies) {
-    const angleToPlayer = Math.atan2(state.player.y - enemy.y, state.player.x - enemy.x);
-    if (enemy.spawnDelay > 0) {
-      enemy.spawnDelay = Math.max(0, enemy.spawnDelay - dt);
-      continue;
-    }
-    const enemySpeed = 42 * state.stage.enemySpeed * (state.rule?.id === "overdrive" ? 1.3 : 1);
-    if (state.rule?.id === "orbit") {
-      enemy.phase += dt * .9;
-      const orbitSpeed = state.stage.enemySpeed;
-      const orbitAngle = Math.atan2(enemy.y - H / 2, enemy.x - W / 2) + dt * (.5 + enemy.seed * .04) * orbitSpeed;
-      const desiredX = W / 2 + Math.cos(orbitAngle) * (190 + enemy.seed * 18);
-      const desiredY = H / 2 + Math.sin(orbitAngle) * (130 + enemy.seed * 13);
-      const orbitTrackingGain = .7 * orbitSpeed;
-      const orbitTrackingStep = clamp(dt * orbitSpeed, 0, 1);
-      enemy.vx = lerp(enemy.vx, (desiredX - enemy.x) * orbitTrackingGain, orbitTrackingStep);
-      enemy.vy = lerp(enemy.vy, (desiredY - enemy.y) * orbitTrackingGain, orbitTrackingStep);
-    } else {
-      enemy.vx = lerp(enemy.vx, Math.cos(angleToPlayer) * enemySpeed, dt * .45);
-      enemy.vy = lerp(enemy.vy, Math.sin(angleToPlayer) * enemySpeed, dt * .45);
-    }
-    enemy.x += enemy.vx * dt;
-    enemy.y += enemy.vy * dt;
-    enemy.x = clamp(enemy.x, arena.x + enemy.r, arena.x + arena.w - enemy.r);
-    enemy.y = clamp(enemy.y, arena.y + enemy.r, arena.y + arena.h - enemy.r);
-    if (distance(state.player, enemy) < state.player.r + enemy.r + 2) hitPlayer();
-  }
+  for (const enemy of state.enemies) updateEnemy(enemy, dt);
 
   if (state.rule?.id === "red") {
     const edgeDistance = Math.min(state.player.x - arena.x, arena.x + arena.w - state.player.x, state.player.y - arena.y, arena.y + arena.h - state.player.y);
@@ -719,6 +860,7 @@ function update(dt) {
   }
   state.floatingTexts = state.floatingTexts.filter((label) => label.life > 0);
   state.score += dt * 2 * state.stage.scoreMultiplier;
+  checkTargetState();
   updateHud();
   if (state.time <= 0) finishGame();
 }
@@ -786,7 +928,8 @@ function drawOrb(orb) {
 }
 
 function drawEnemy(enemy) {
-  const color = state.rule?.id === "overdrive" ? "#ff4f32" : "#ff7653";
+  const roleColors = { hunter: "#ff7653", interceptor: "#ffd765", flanker: "#bca9ff", warden: "#77e5ff", cutoff: "#d7ff52" };
+  const color = state.rule?.id === "overdrive" ? "#ff4f32" : roleColors[enemy.role] || "#ff7653";
   ctx.save();
   ctx.translate(enemy.x, enemy.y);
   ctx.rotate(Math.atan2(enemy.vy, enemy.vx));
@@ -806,6 +949,11 @@ function drawEnemy(enemy) {
   ctx.stroke();
   ctx.fillStyle = "#0c1019";
   ctx.beginPath(); ctx.arc(2, 0, 2.8, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(241,240,232,.9)";
+  if (enemy.role === "interceptor") ctx.fillRect(-6, -2, 3, 4);
+  else if (enemy.role === "flanker") { ctx.beginPath(); ctx.arc(-5, 0, 2, 0, Math.PI * 2); ctx.fill(); }
+  else if (enemy.role === "warden") { ctx.fillRect(-7, -3, 3, 6); ctx.fillRect(-3, -1, 3, 2); }
+  else if (enemy.role === "cutoff") { ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(-4, -3); ctx.lineTo(-4, 3); ctx.closePath(); ctx.fill(); }
   ctx.restore();
 }
 
@@ -891,7 +1039,7 @@ function draw(now) {
 }
 
 function loop(now) {
-  const dt = clamp((now - state.last) / 1000, 0, .04);
+  const dt = Math.max(0, (now - state.last) / 1000);
   state.last = now;
   if (state.mode === "playing") update(dt);
   draw(now);

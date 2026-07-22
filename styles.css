@@ -65,6 +65,8 @@ h1 em { color: var(--lime); font-style: normal; }
 .dashboard { display: grid; grid-template-columns: 1.7fr 1fr 1fr 1fr; gap: 1px; border: 1px solid var(--line); background: var(--line); }
 .metric { position: relative; min-height: 68px; padding: 12px 14px; background: var(--panel); }
 .metric-score { background: linear-gradient(120deg, rgba(215,255,82,.13), var(--panel) 65%); }
+.target-progress { position: absolute; right: 14px; bottom: 11px; left: 14px; display: block; height: 2px; overflow: hidden; background: rgba(241,240,232,.14); }
+.target-progress::after { display: block; width: 100%; height: 100%; background: var(--lime); box-shadow: 0 0 8px var(--lime); content: ""; transform: scaleX(var(--target-progress, 0)); transform-origin: left center; transition: transform .12s linear; }
 .metric span { display: block; color: var(--muted); font-size: 9px; letter-spacing: .14em; }
 .metric strong { display: inline-block; margin-top: 7px; color: var(--paper); font: 500 23px var(--font-mono); letter-spacing: -.08em; }
 .metric-score strong { color: var(--lime); }

@@ -39,6 +39,23 @@
 - 30~60초 플레이 영상 녹화
 - 규칙 카드별 체감 난이도와 점수 배율 조정
 
+## 2026-07-22 / 난이도·AI 회귀 점검
+
+- 목표 점수를 2200 / 3800 / 6200 / 9000으로 갱신하고, 기존 진행 형식과 최고 점수를 유지하는지 정적 점검
+- 스테이지별 DIRECT PURSUIT, PATH PREDICTION, PINCER FORMATION, ADAPTIVE HUNT 큐와 역할 표식 노출 점검
+- prediction, flanker 좌우 압박, warden 오브 점유, separation, ORBIT 결합이 유한값·아레나 clamp를 거치는지 코드 점검
+- SCORE 하단 목표 진행선과 TARGET LOCKED / TARGET LOST 전환이 상태 변화마다 한 번만 발생하도록 점검
+- 이전 JSON의 legacy 목표 체인으로 이미 해금한 단계는 보존하고, `stageBest`가 0인 forged `unlockedStage`는 거부하며, 레거시 CLEAR 카드 표시가 해금 상태와 모순되지 않는지 회귀 점검
+
+## 2026-07-22 / RAF 시간 계약 회귀 점검
+
+- RAF의 실제 wall delta는 더 이상 40ms로 잘라 버리지 않고 `update`에 전달하도록 수정
+- `update`는 내부에서 최대 40ms씩만 물리·충돌·AI를 진행하며, 100ms 입력은 40ms + 40ms + 20ms로 누적해 경과 시간·점수·룰 타이머를 모두 100ms 반영하도록 코드 점검
+- 각 서브스텝 전 룰 경계를 확인해 8초 경계를 건너뛰지 않고, 마지막 서브스텝은 60.0초에 clamp되어 종료를 한 번만 호출하도록 점검
+- pause/resume은 `state.last`를 재설정하므로 pause 구간이 런 시간에 더해지지 않는 기존 계약을 유지
+- 로컬 Headless Chromium에서 START 후 HUD가 `RULE 01`로 전환되는 것과, 완주 후 `TIME 00.0`·`gameState over`·`RULE 08` 상태를 실제 확인
+- 종료 경계의 부동소수 잔차는 `1e-7` 이내에서 60.0/0.0으로 snap한다. 따라서 100ms 업데이트 600회, 60초 단일 업데이트, 59.9초 뒤 100ms 업데이트는 동일 호출 안에서 종료한다.
+
 ## 2026-07-22 / 프로덕션 개선 회귀 테스트
 
 환경: 데스크톱 1440×1000, 모바일 390×844 및 320×700
