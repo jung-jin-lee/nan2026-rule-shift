@@ -43,6 +43,7 @@ body::before {
 
 button, a { font: inherit; }
 button { cursor: pointer; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
 
 .app-shell { width: min(1440px, calc(100% - 64px)); margin: 0 auto; padding: 28px 0 72px; }
 
@@ -69,6 +70,29 @@ h1 em { color: var(--lime); font-style: normal; }
 .metric-score strong { color: var(--lime); }
 .metric i { margin-left: 4px; color: var(--muted); font-size: 9px; font-style: normal; }
 .metric-stage b { display: block; margin-top: 3px; color: var(--cyan); font-size: 8px; font-weight: 400; letter-spacing: .04em; white-space: nowrap; }
+
+.stage-selector { margin-top: 12px; padding: 13px; border: 1px solid var(--line); background: rgba(7, 10, 16, .48); }
+.stage-selector[hidden] { display: none; }
+.stage-selector-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--muted); font-size: 8px; letter-spacing: .1em; }
+.stage-selector-heading span:first-child { color: var(--paper); font-weight: 700; }
+.stage-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.stage-option { position: relative; display: grid; align-content: start; min-width: 0; min-height: 127px; padding: 10px; border: 1px solid var(--line); color: var(--paper); background: rgba(241,240,232,.025); text-align: left; transition: border-color .16s, background .16s, transform .16s; }
+.stage-option:hover:not(:disabled) { border-color: rgba(119,229,255,.7); background: rgba(119,229,255,.07); transform: translateY(-2px); }
+.stage-option.is-selected { border-color: var(--cyan); background: linear-gradient(145deg, rgba(119,229,255,.15), rgba(119,229,255,.025)); box-shadow: inset 3px 0 0 var(--cyan); }
+.stage-option.is-cleared:not(.is-selected) { border-color: rgba(215,255,82,.38); }
+.stage-option:disabled { cursor: not-allowed; color: #68707b; background: rgba(241,240,232,.012); opacity: .72; }
+.stage-option-top { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+.stage-number, .stage-status, .stage-cue, .stage-stat { display: block; font-size: 8px; letter-spacing: .07em; }
+.stage-number { color: var(--muted); }
+.stage-status { color: var(--cyan); }
+.stage-option.is-cleared .stage-status { color: var(--lime); }
+.stage-option.is-locked .stage-status { color: var(--orange); }
+.stage-option strong { display: block; overflow: hidden; margin-top: 12px; color: inherit; font: 800 clamp(14px, 1.4vw, 19px)/.95 var(--font-display); letter-spacing: -.055em; text-overflow: ellipsis; white-space: nowrap; }
+.stage-cue { min-height: 20px; margin-top: 5px; color: var(--muted); font-size: 7px; line-height: 1.35; }
+.stage-stat { margin-top: 5px; color: var(--muted); }
+.stage-stat b { margin-left: 3px; color: var(--paper); font-weight: 500; }
+.stage-option.is-locked .stage-stat b { color: #7a818c; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; }
 
 .rule-strip { display: grid; grid-template-columns: 74px 1fr 60px; gap: 16px; align-items: center; min-height: 84px; margin-top: 12px; padding: 14px 16px; border: 1px solid rgba(215,255,82,.33); background: linear-gradient(90deg, rgba(215,255,82,.1), rgba(215,255,82,.025)); }
 .rule-index { align-self: stretch; display: grid; place-items: center; border-right: 1px solid rgba(215,255,82,.2); color: var(--lime); font-size: 9px; writing-mode: vertical-rl; letter-spacing: .13em; }
@@ -139,6 +163,12 @@ h1 em { color: var(--lime); font-style: normal; }
   .metric-score { grid-column: 1 / -1; }
   .metric strong { font-size: 18px; }
   .metric-stage b { font-size: 7px; }
+  .stage-selector { padding: 10px; }
+  .stage-selector-heading { margin-bottom: 8px; font-size: 7px; }
+  .stage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  .stage-option { min-height: 112px; padding: 9px; }
+  .stage-option strong { margin-top: 10px; font-size: 16px; }
+  .stage-cue { min-height: 18px; font-size: 7px; }
   .rule-strip { grid-template-columns: 42px 1fr 43px; gap: 8px; min-height: 72px; padding: 10px; }
   .rule-timer { width: 38px; height: 38px; }
   .rule-main strong { font-size: 15px; }
@@ -148,11 +178,11 @@ h1 em { color: var(--lime); font-style: normal; }
   .stage-banner strong { font-size: 25px; }
   .stage-banner > span { font-size: 8px; }
   .stage-banner #stageBannerCopy { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 7px; }
-  .overlay-mark { width: 34px; height: 34px; margin-bottom: 7px; font-size: 21px; }
-  .game-overlay { padding: 12px; }
-  .game-overlay h3 { margin-top: 4px; font-size: 29px; }
-  .game-overlay p { display: none; }
-  .primary-button { min-width: 142px; margin-top: 10px; padding: 9px 11px 9px 13px; font-size: 9px; }
+  .overlay-mark { width: 28px; height: 28px; margin-bottom: 3px; font-size: 18px; }
+  .game-overlay { padding: 8px 10px; }
+  .game-overlay h3 { margin-top: 2px; font-size: 24px; line-height: 1; }
+  .game-overlay p { display: block; max-width: 100%; margin-top: 5px; font-size: 8px; line-height: 1.45; }
+  .primary-button { min-width: 142px; margin-top: 7px; padding: 8px 10px 8px 12px; font-size: 8px; }
   .overlay-hint { display: none; }
   .game-controls { justify-content: flex-end; padding-top: 10px; }
   .control-copy { display: none; }

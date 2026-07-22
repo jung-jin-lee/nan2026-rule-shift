@@ -24,7 +24,7 @@
           <div class="eyebrow"><span class="eyebrow-line"></span> ADAPTIVE ARCADE / 60 SEC</div>
           <h1><span class="headline-line">룰이 바뀌는 순간,</span><em class="headline-line">당신의 판이 된다.</em></h1>
           <p class="intro-copy">
-            60초 동안 변하는 룰에 적응해 최고 점수를 남겨라.
+            스테이지를 선택해 60초 동안 변하는 룰에 적응하고, 목표 점수로 다음 신호를 해금하라.
           </p>
         </div>
 
@@ -32,9 +32,47 @@
           <div class="dashboard" aria-live="polite">
             <div class="metric metric-score"><span>SCORE</span><strong id="scoreValue">000000</strong></div>
             <div class="metric"><span>TIME</span><strong id="timeValue">60.0</strong><i>s</i></div>
-            <div class="metric metric-stage"><span>STAGE</span><strong id="stageValue">01</strong><i>/04</i><b id="stageMeta">SYNC · ×1.00</b></div>
+            <div class="metric metric-stage"><span>STAGE</span><strong id="stageValue">01</strong><i>/04</i><b id="stageMeta">SYNC · ×1.00 · TGT 0900</b></div>
             <div class="metric"><span>STREAK</span><strong id="comboValue">x0</strong></div>
           </div>
+
+          <section class="stage-selector" id="stageSelector" aria-labelledby="stageSelectorTitle">
+            <div class="stage-selector-heading">
+              <span id="stageSelectorTitle">SELECT STAGE</span>
+              <span>60 SEC / HIT TARGET TO UNLOCK</span>
+            </div>
+            <div class="stage-grid">
+              <button class="stage-option is-selected" type="button" data-stage-index="0" aria-pressed="true" aria-disabled="false">
+                <span class="stage-option-top"><span class="stage-number">STAGE 01</span><span class="stage-status" data-stage-status>READY</span></span>
+                <strong>SYNC</strong>
+                <span class="stage-cue">LEARN THE SIGNAL</span>
+                <span class="stage-stat">TARGET <b data-stage-target>0900</b></span>
+                <span class="stage-stat">BEST <b data-stage-best>0000</b></span>
+              </button>
+              <button class="stage-option" type="button" data-stage-index="1" aria-pressed="false" aria-disabled="true" disabled>
+                <span class="stage-option-top"><span class="stage-number">STAGE 02</span><span class="stage-status" data-stage-status>LOCKED</span></span>
+                <strong>PRESSURE</strong>
+                <span class="stage-cue">KEEP YOUR LINE</span>
+                <span class="stage-stat">TARGET <b data-stage-target>1400</b></span>
+                <span class="stage-stat">BEST <b data-stage-best>0000</b></span>
+              </button>
+              <button class="stage-option" type="button" data-stage-index="2" aria-pressed="false" aria-disabled="true" disabled>
+                <span class="stage-option-top"><span class="stage-number">STAGE 03</span><span class="stage-status" data-stage-status>LOCKED</span></span>
+                <strong>OVERLOAD</strong>
+                <span class="stage-cue">MAKE EVERY ORB COUNT</span>
+                <span class="stage-stat">TARGET <b data-stage-target>2000</b></span>
+                <span class="stage-stat">BEST <b data-stage-best>0000</b></span>
+              </button>
+              <button class="stage-option" type="button" data-stage-index="3" aria-pressed="false" aria-disabled="true" disabled>
+                <span class="stage-option-top"><span class="stage-number">STAGE 04</span><span class="stage-status" data-stage-status>LOCKED</span></span>
+                <strong>BREAKPOINT</strong>
+                <span class="stage-cue">HOLD THE IMPOSSIBLE</span>
+                <span class="stage-stat">TARGET <b data-stage-target>2800</b></span>
+                <span class="stage-stat">BEST <b data-stage-best>0000</b></span>
+              </button>
+            </div>
+            <p class="sr-only" id="stageSelectStatus" aria-live="polite"></p>
+          </section>
 
           <div class="rule-strip" id="ruleStrip">
             <div class="rule-index" id="ruleIndex">RULE 00</div>
@@ -54,7 +92,7 @@
             <div class="stage-banner" id="stageBanner" role="status" aria-live="assertive">
               <span id="stageBannerKicker">STAGE 01 / 04</span>
               <strong id="stageBannerTitle">SYNC</strong>
-              <span id="stageBannerCopy">LEARN THE SIGNAL · SCORE ×1.00</span>
+              <span id="stageBannerCopy">TARGET 0900 · 60 SEC</span>
             </div>
             <div class="game-overlay" id="gameOverlay">
               <div class="overlay-mark">◒</div>

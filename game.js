@@ -21,6 +21,9 @@ const stageBanner = $("stageBanner");
 const stageBannerKicker = $("stageBannerKicker");
 const stageBannerTitle = $("stageBannerTitle");
 const stageBannerCopy = $("stageBannerCopy");
+const stageSelector = $("stageSelector");
+const stageSelectStatus = $("stageSelectStatus");
+const stageOptions = [...document.querySelectorAll("[data-stage-index]")];
 const overlay = $("gameOverlay");
 const overlayTitle = $("overlayTitle");
 const overlayCopy = $("overlayCopy");
@@ -34,9 +37,12 @@ const touchDirectionButtons = [...document.querySelectorAll("[data-key]")];
 
 const RUN_DURATION = 60;
 const RULE_DURATION = 8;
-const STAGE_DURATION = 15;
 const DASH_COOLDOWN = 1.1;
 const BLOOM_ORB_BONUS_CAP = 3;
+const PROGRESS_STORAGE_KEY = "ruleshift:stage-progress";
+const BEST_STORAGE_KEY = "ruleshift:best";
+const PROGRESS_STORAGE_LOCK = "ruleshift:progress-storage";
+const MAX_STORED_SCORE = 9_999_999;
 
 function readStorage(key, fallback) {
   try { return localStorage.getItem(key) ?? fallback; }
@@ -88,10 +94,6 @@ function playSound(name) {
   } else if (name === "shift") {
     tone(180, .1, "sawtooth", .025);
     tone(320, .14, "sawtooth", .025, .07);
-  } else if (name === "stage") {
-    tone(150, .12, "triangle", .03);
-    tone(300, .14, "triangle", .035, .09);
-    tone(600, .18, "sine", .03, .19);
   } else if (name === "collect") {
     tone(620, .07, "sine", .035);
   } else if (name === "gold") {
@@ -120,21 +122,143 @@ const RULES = [
 ];
 
 const STAGES = [
-  { name: "SYNC", cue: "LEARN THE SIGNAL", scoreMultiplier: 1, enemyCount: 4, enemySpeed: .82, hitPenalty: 60, orbCount: 12, color: "#77e5ff" },
-  { name: "PRESSURE", cue: "KEEP YOUR LINE", scoreMultiplier: 1.25, enemyCount: 5, enemySpeed: 1, hitPenalty: 80, orbCount: 10, color: "#d7ff52" },
-  { name: "OVERLOAD", cue: "MAKE EVERY ORB COUNT", scoreMultiplier: 1.55, enemyCount: 6, enemySpeed: 1.16, hitPenalty: 105, orbCount: 8, color: "#ffb36b" },
-  { name: "BREAKPOINT", cue: "HOLD THE IMPOSSIBLE", scoreMultiplier: 2, enemyCount: 7, enemySpeed: 1.32, hitPenalty: 130, orbCount: 6, color: "#ff7653" },
+  { name: "SYNC", cue: "LEARN THE SIGNAL", scoreMultiplier: 1, enemyCount: 4, enemySpeed: .82, hitPenalty: 60, orbCount: 12, targetScore: 900, color: "#77e5ff" },
+  { name: "PRESSURE", cue: "KEEP YOUR LINE", scoreMultiplier: 1.25, enemyCount: 5, enemySpeed: 1, hitPenalty: 80, orbCount: 10, targetScore: 1400, color: "#d7ff52" },
+  { name: "OVERLOAD", cue: "MAKE EVERY ORB COUNT", scoreMultiplier: 1.55, enemyCount: 6, enemySpeed: 1.16, hitPenalty: 105, orbCount: 8, targetScore: 2000, color: "#ffb36b" },
+  { name: "BREAKPOINT", cue: "HOLD THE IMPOSSIBLE", scoreMultiplier: 2, enemyCount: 7, enemySpeed: 1.32, hitPenalty: 130, orbCount: 6, targetScore: 2800, color: "#ff7653" },
 ];
+
+function storedScore(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? clamp(value, 0, MAX_STORED_SCORE) : 0;
+}
+
+function readStoredScore(key) {
+  const raw = readStorage(key, "");
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) return 0;
+  return storedScore(Number(raw));
+}
+
+function readProgress() {
+  const fallback = { unlockedStage: 0, stageBest: STAGES.map(() => 0) };
+  const raw = readStorage(PROGRESS_STORAGE_KEY, "");
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fallback;
+    const requestedUnlockedStage = Number.isSafeInteger(parsed.unlockedStage)
+      ? clamp(parsed.unlockedStage, 0, STAGES.length - 1)
+      : 0;
+    const stageBest = Array.isArray(parsed.stageBest)
+      ? STAGES.map((_, index) => storedScore(parsed.stageBest[index]))
+      : fallback.stageBest;
+    let verifiedUnlockedStage = 0;
+    while (
+      verifiedUnlockedStage < STAGES.length - 1
+      && stageBest[verifiedUnlockedStage] >= STAGES[verifiedUnlockedStage].targetScore
+    ) {
+      verifiedUnlockedStage += 1;
+    }
+    return { unlockedStage: Math.min(requestedUnlockedStage, verifiedUnlockedStage), stageBest };
+  } catch {
+    return fallback;
+  }
+}
+
+function writeProgress(progress) {
+  writeStorage(PROGRESS_STORAGE_KEY, JSON.stringify({
+    unlockedStage: clamp(progress.unlockedStage, 0, STAGES.length - 1),
+    stageBest: STAGES.map((_, index) => storedScore(progress.stageBest[index])),
+  }));
+}
+
+function mergeProgress(...progresses) {
+  return {
+    unlockedStage: clamp(Math.max(
+      0,
+      ...progresses.map((item) => Number.isSafeInteger(item?.unlockedStage) ? item.unlockedStage : 0),
+    ), 0, STAGES.length - 1),
+    stageBest: STAGES.map((_, index) => Math.max(
+      0,
+      ...progresses.map((item) => storedScore(item?.stageBest?.[index])),
+    )),
+  };
+}
+
+function applyFinishToProgress(progress, completedStageIndex, finalScore, cleared) {
+  const nextProgress = mergeProgress(progress);
+  nextProgress.stageBest[completedStageIndex] = Math.max(
+    nextProgress.stageBest[completedStageIndex],
+    storedScore(finalScore),
+  );
+  let newlyUnlocked = null;
+  if (cleared && completedStageIndex < STAGES.length - 1 && nextProgress.unlockedStage < completedStageIndex + 1) {
+    nextProgress.unlockedStage = completedStageIndex + 1;
+    newlyUnlocked = completedStageIndex + 1;
+  }
+  return { progress: nextProgress, newlyUnlocked };
+}
+
+function commitFinishSnapshot(snapshot) {
+  const latestProgress = readProgress();
+  const latestBestScore = readStoredScore(BEST_STORAGE_KEY);
+  const mergedProgress = mergeProgress(latestProgress, snapshot.progress);
+  const applied = applyFinishToProgress(
+    mergedProgress,
+    snapshot.completedStageIndex,
+    snapshot.finalScore,
+    snapshot.cleared,
+  );
+  const bestScore = Math.max(latestBestScore, snapshot.bestScore, storedScore(snapshot.finalScore));
+  writeProgress(applied.progress);
+  writeStorage(BEST_STORAGE_KEY, String(bestScore));
+  return { progress: applied.progress, bestScore, newlyUnlocked: applied.newlyUnlocked };
+}
+
+function commitFinishSnapshotSafely(snapshot) {
+  try { return commitFinishSnapshot(snapshot); }
+  catch {
+    const applied = applyFinishToProgress(
+      snapshot.progress,
+      snapshot.completedStageIndex,
+      snapshot.finalScore,
+      snapshot.cleared,
+    );
+    return {
+      progress: applied.progress,
+      bestScore: Math.max(snapshot.bestScore, storedScore(snapshot.finalScore)),
+      newlyUnlocked: applied.newlyUnlocked,
+    };
+  }
+}
+
+function persistFinishSnapshot(snapshot) {
+  const fallback = () => commitFinishSnapshotSafely(snapshot);
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.locks?.request === "function") {
+      return Promise.resolve(navigator.locks.request(
+        PROGRESS_STORAGE_LOCK,
+        { mode: "exclusive" },
+        () => commitFinishSnapshotSafely(snapshot),
+      )).catch(fallback);
+    }
+  } catch { /* Web Locks may be unavailable in restricted browser contexts. */ }
+  return Promise.resolve(fallback());
+}
+
+const progress = readProgress();
 
 const state = {
   mode: "ready",
   score: 0,
-  bestScore: Number.parseInt(readStorage("ruleshift:best", "0"), 10) || 0,
+  bestScore: readStoredScore(BEST_STORAGE_KEY),
   time: RUN_DURATION,
   elapsed: 0,
   round: 0,
-  stageIndex: 0,
-  stage: STAGES[0],
+  selectedStageIndex: progress.unlockedStage,
+  stageIndex: progress.unlockedStage,
+  stage: STAGES[progress.unlockedStage],
+  progress,
+  result: null,
   stageBannerTimer: 0,
   combo: 0,
   rule: null,
@@ -190,33 +314,64 @@ function createEnemy(index, spawnDelay = 0) {
 
 function stageMultiplierLabel() { return `×${state.stage.scoreMultiplier.toFixed(2)}`; }
 
-function resizeWorldForStage() {
-  state.orbs = state.orbs.slice(0, state.stage.orbCount);
-  while (state.orbs.length < state.stage.orbCount) state.orbs.push(createOrb());
-  while (state.enemies.length < state.stage.enemyCount) state.enemies.push(createEnemy(state.enemies.length, .75));
-  state.enemies = state.enemies.slice(0, state.stage.enemyCount);
+function stageNumber(index = state.stageIndex) {
+  return String(index + 1).padStart(2, "0");
+}
+
+function stageTargetLabel(stage = state.stage) {
+  return String(stage.targetScore).padStart(4, "0");
+}
+
+function isStageUnlocked(index) {
+  return Number.isInteger(index) && index >= 0 && index <= state.progress.unlockedStage;
+}
+
+function setRunStage(index) {
+  state.stageIndex = index;
+  state.stage = STAGES[index];
 }
 
 function showStageBanner() {
-  const stageNumber = String(state.stageIndex + 1).padStart(2, "0");
-  stageBannerKicker.textContent = `STAGE ${stageNumber} / 04`;
+  stageBannerKicker.textContent = `STAGE ${stageNumber()} / 04`;
   stageBannerTitle.textContent = state.stage.name;
-  stageBannerCopy.textContent = `${state.stage.cue} · SCORE ${stageMultiplierLabel()}`;
+  stageBannerCopy.textContent = `TARGET ${stageTargetLabel()} · 60 SEC`;
   stageBanner.style.setProperty("--stage-color", state.stage.color);
   stageBanner.classList.add("is-visible");
   state.stageBannerTimer = 1.7;
 }
 
-function applyStage(index, isStarting = false) {
-  state.stageIndex = index;
-  state.stage = STAGES[index];
-  resizeWorldForStage();
-  state.flash = 1;
-  state.shake = isStarting ? 3 : 7;
-  state.player.invuln = Math.max(state.player.invuln, .9);
-  showStageBanner();
-  burst(state.player.x, state.player.y, state.stage.color, isStarting ? 12 : 22);
-  if (!isStarting) playSound("stage");
+function renderStageSelector(announce = false) {
+  for (const option of stageOptions) {
+    const index = Number.parseInt(option.dataset.stageIndex, 10);
+    const stage = STAGES[index];
+    const unlocked = isStageUnlocked(index);
+    const selected = index === state.selectedStageIndex;
+    const cleared = state.progress.stageBest[index] >= stage.targetScore;
+    option.disabled = !unlocked;
+    option.setAttribute("aria-disabled", String(!unlocked));
+    option.setAttribute("aria-pressed", String(unlocked && selected));
+    option.classList.toggle("is-selected", unlocked && selected);
+    option.classList.toggle("is-locked", !unlocked);
+    option.classList.toggle("is-cleared", cleared);
+    option.querySelector("[data-stage-target]").textContent = stageTargetLabel(stage);
+    option.querySelector("[data-stage-best]").textContent = String(state.progress.stageBest[index]).padStart(4, "0");
+    option.querySelector("[data-stage-status]").textContent = !unlocked ? "LOCKED" : cleared ? "CLEAR" : "READY";
+    option.setAttribute("aria-label", `STAGE ${stageNumber(index)} ${stage.name}, ${!unlocked ? "locked" : `target ${stage.targetScore}, best ${state.progress.stageBest[index]}`}`);
+  }
+  if (announce) {
+    const selected = STAGES[state.selectedStageIndex];
+    stageSelectStatus.textContent = `STAGE ${stageNumber(state.selectedStageIndex)} ${selected.name} selected. Target score ${selected.targetScore}.`;
+  }
+}
+
+function selectStage(index, announce = true) {
+  if (state.mode === "playing" || state.mode === "paused" || !isStageUnlocked(index)) return false;
+  state.selectedStageIndex = index;
+  setRunStage(index);
+  renderStageSelector(announce);
+  updateHud();
+  renderOverlay();
+  return true;
 }
 
 function resetWorld() {
@@ -224,8 +379,6 @@ function resetWorld() {
   state.time = RUN_DURATION;
   state.elapsed = 0;
   state.round = 0;
-  state.stageIndex = 0;
-  state.stage = STAGES[0];
   state.stageBannerTimer = 0;
   state.combo = 0;
   state.rule = null;
@@ -274,8 +427,8 @@ function nextRule() {
 function updateHud() {
   scoreValue.textContent = String(Math.max(0, Math.floor(state.score))).padStart(6, "0");
   timeValue.textContent = state.time.toFixed(1).padStart(4, "0");
-  stageValue.textContent = String(state.stageIndex + 1).padStart(2, "0");
-  stageMeta.textContent = `${state.stage.name} · ${stageMultiplierLabel()}`;
+  stageValue.textContent = stageNumber();
+  stageMeta.textContent = `${state.stage.name} · ${stageMultiplierLabel()} · TGT ${stageTargetLabel()}`;
   comboValue.textContent = `x${state.combo}`;
   if (state.rule) {
     const secondsLeft = Math.max(0, state.nextRuleAt - state.elapsed);
@@ -297,41 +450,64 @@ function showToast(message) {
   state.toastTimer = 2.3;
 }
 
+function renderOverlay() {
+  const selected = STAGES[state.selectedStageIndex];
+  if (state.mode === "ready") {
+    overlayTitle.textContent = `STAGE ${stageNumber(state.selectedStageIndex)} · ${selected.name}`;
+    overlayCopy.innerHTML = `60초 동안 신호를 버텨라.<br />TARGET <b class="overlay-score">${stageTargetLabel(selected)}</b> · SCORE ${selected.scoreMultiplier.toFixed(2)}×`;
+    startButton.innerHTML = `<span>START STAGE ${stageNumber(state.selectedStageIndex)}</span><b>↗</b>`;
+  } else if (state.mode === "paused") {
+    overlayTitle.textContent = `STAGE ${stageNumber()} · PAUSED`;
+    overlayCopy.innerHTML = `${state.stage.name} · TARGET <b class="overlay-score">${stageTargetLabel()}</b><br />준비되면 60초 런을 이어간다.`;
+    startButton.innerHTML = "<span>RESUME RUN</span><b>↗</b>";
+  } else if (state.mode === "over" && state.result) {
+    const resultStage = STAGES[state.result.stageIndex];
+    const finalScore = state.result.finalScore;
+    if (!state.result.cleared) {
+      const missing = Math.max(0, resultStage.targetScore - finalScore);
+      overlayTitle.textContent = `STAGE ${stageNumber(state.result.stageIndex)} · FAIL`;
+      overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> / TARGET ${stageTargetLabel(resultStage)}<br /><b>${String(missing).padStart(4, "0")}</b> points more. Retry this stage.`;
+    } else if (state.result.stageIndex === STAGES.length - 1) {
+      overlayTitle.textContent = "ALL STAGES CLEAR";
+      overlayCopy.innerHTML = `STAGE 04 CLEAR · SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b><br />All four signals are open. Choose any cleared stage.`;
+    } else {
+      const nextStage = STAGES[state.selectedStageIndex];
+      overlayTitle.textContent = `STAGE ${stageNumber(state.result.stageIndex)} · CLEAR`;
+      overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> / TARGET ${stageTargetLabel(resultStage)}<br />${state.result.newlyUnlocked ? `STAGE ${stageNumber(state.result.newlyUnlocked)} ${nextStage.name} OPEN` : `NEXT: STAGE ${stageNumber(state.selectedStageIndex)} ${nextStage.name}`}`;
+    }
+    startButton.innerHTML = `<span>PLAY STAGE ${stageNumber(state.selectedStageIndex)} · TARGET ${stageTargetLabel(selected)}</span><b>↗</b>`;
+  }
+}
+
 function setMode(mode) {
   state.mode = mode;
   document.body.dataset.gameState = mode;
   canvas.dataset.gameState = mode;
-  const isReady = mode === "ready";
   const isPaused = mode === "paused";
   overlay.classList.toggle("is-hidden", mode === "playing");
+  stageSelector.hidden = mode === "playing" || isPaused;
   pauseButton.disabled = mode !== "playing" && !isPaused;
   touchDirectionButtons.forEach((button) => { button.disabled = mode !== "playing"; });
   pauseButton.innerHTML = isPaused ? "RESUME <span>▶</span>" : "PAUSE <span>Ⅱ</span>";
   touchDash.disabled = mode !== "playing" || state.dashCooldown > 0;
-  if (isReady) {
-    overlayTitle.textContent = "RULESHIFT";
-    overlayCopy.innerHTML = "룰은 예고 없이 바뀐다.<br />당신은 얼마나 빨리 적응할 수 있나?";
-    startButton.innerHTML = "<span>START RUN</span><b>↗</b>";
-  } else if (isPaused) {
-    overlayTitle.textContent = "HOLD THE LINE";
-    overlayCopy.innerHTML = "잠깐 멈췄다.<br />다시 움직이면 룰은 계속된다.";
-    startButton.innerHTML = "<span>RESUME RUN</span><b>↗</b>";
-  } else if (mode === "over") {
-    const finalScore = Math.floor(state.score);
-    const rank = finalScore >= 1800 ? "S" : finalScore >= 1200 ? "A" : finalScore >= 700 ? "B" : finalScore >= 300 ? "C" : "D";
-    overlayTitle.textContent = `SHIFT RANK ${rank}`;
-    overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> · BEST ${String(state.bestScore).padStart(6, "0")}<br />다음 판에서는 더 높은 랭크에 도전하라.`;
-    startButton.innerHTML = "<span>RUN IT BACK</span><b>↗</b>";
-  }
+  renderStageSelector();
+  renderOverlay();
   updateHud();
 }
 
 function beginGame() {
+  if (!isStageUnlocked(state.selectedStageIndex)) return;
   ensureAudio();
+  setRunStage(state.selectedStageIndex);
   resetWorld();
+  state.result = null;
   setMode("playing");
   playSound("start");
-  applyStage(0, true);
+  state.flash = 1;
+  state.shake = 3;
+  state.player.invuln = .9;
+  showStageBanner();
+  burst(state.player.x, state.player.y, state.stage.color, 12);
   nextRule();
   canvas.focus();
   state.last = performance.now();
@@ -405,15 +581,54 @@ function addFloatingText(x, y, text, color) {
   state.floatingTexts.push({ x, y, text, color, life: .85, maxLife: .85 });
 }
 
+function reconcileAuthoritativeFinish(resultReference, authoritative) {
+  state.progress = mergeProgress(state.progress, authoritative.progress);
+  state.bestScore = Math.max(state.bestScore, storedScore(authoritative.bestScore));
+  if (state.result === resultReference) resultReference.newlyUnlocked = authoritative.newlyUnlocked;
+  if (state.mode === "ready" || state.mode === "over") {
+    renderStageSelector();
+    updateHud();
+    renderOverlay();
+  }
+}
+
 function finishGame() {
   if (state.mode !== "playing") return;
   const finalScore = Math.floor(state.score);
-  if (finalScore > state.bestScore) {
-    state.bestScore = finalScore;
-    writeStorage("ruleshift:best", String(finalScore));
+  const completedStageIndex = state.stageIndex;
+  const completedStage = state.stage;
+  const cleared = finalScore >= completedStage.targetScore;
+  const finishSnapshot = {
+    progress: mergeProgress(state.progress),
+    bestScore: storedScore(state.bestScore),
+    completedStageIndex,
+    finalScore,
+    cleared,
+  };
+  const immediate = applyFinishToProgress(
+    finishSnapshot.progress,
+    completedStageIndex,
+    finalScore,
+    cleared,
+  );
+  state.progress = immediate.progress;
+  state.bestScore = Math.max(state.bestScore, storedScore(finalScore));
+  const resultReference = {
+    stageIndex: completedStageIndex,
+    finalScore,
+    cleared,
+    newlyUnlocked: immediate.newlyUnlocked,
+  };
+  state.result = resultReference;
+  if (cleared && completedStageIndex < STAGES.length - 1) {
+    state.selectedStageIndex = completedStageIndex + 1;
+    setRunStage(state.selectedStageIndex);
   }
   playSound("finish");
   setMode("over");
+  void persistFinishSnapshot(finishSnapshot)
+    .then((authoritative) => reconcileAuthoritativeFinish(resultReference, authoritative))
+    .catch(() => { /* Immediate in-memory result remains usable if persistence fails unexpectedly. */ });
 }
 
 function burst(x, y, color, amount) {
@@ -438,8 +653,6 @@ function update(dt) {
   state.toastTimer -= dt;
   if (state.toastTimer <= 0) toast.classList.remove("is-visible");
 
-  const nextStageIndex = clamp(Math.floor(state.elapsed / STAGE_DURATION), 0, STAGES.length - 1);
-  if (nextStageIndex !== state.stageIndex) applyStage(nextStageIndex);
   if (state.elapsed >= state.nextRuleAt) nextRule();
 
   const input = getInput();
@@ -687,6 +900,10 @@ function loop(now) {
 
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
+  const interactiveTarget = event.target instanceof Element
+    ? event.target.closest("button, a[href], input, select, textarea, summary, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")
+    : null;
+  if (interactiveTarget && (key === "enter" || key === "return" || key === " ")) return;
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) event.preventDefault();
   if ((key === "enter" || key === "return") && (state.mode === "ready" || state.mode === "over")) { beginGame(); return; }
   if (key === "p" || key === "escape") { togglePause(); return; }
@@ -705,11 +922,28 @@ document.addEventListener("visibilitychange", () => {
     setMode("paused");
   }
 });
+window.addEventListener("storage", (event) => {
+  if (event.key === PROGRESS_STORAGE_KEY) {
+    state.progress = mergeProgress(state.progress, readProgress());
+  } else if (event.key === BEST_STORAGE_KEY) {
+    state.bestScore = Math.max(state.bestScore, readStoredScore(BEST_STORAGE_KEY));
+  } else {
+    return;
+  }
+  if (state.mode === "ready" || state.mode === "over") {
+    renderStageSelector();
+    updateHud();
+    renderOverlay();
+  }
+});
 startButton.addEventListener("click", () => {
   if (state.mode === "paused") togglePause();
   else beginGame();
 });
 pauseButton.addEventListener("click", togglePause);
+for (const option of stageOptions) {
+  option.addEventListener("click", () => selectStage(Number.parseInt(option.dataset.stageIndex, 10)));
+}
 canvas.addEventListener("click", () => canvas.focus());
 soundButton.addEventListener("click", () => {
   audio.enabled = !audio.enabled;
