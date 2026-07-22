@@ -7,9 +7,6 @@
     <meta name="description" content="RULESHIFT — 60초 동안 룰이 바뀌는 브라우저 아케이드 게임" />
     <title>RULESHIFT — 룰을 믿지 마</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body data-game-state="ready">
@@ -35,7 +32,7 @@
           <div class="dashboard" aria-live="polite">
             <div class="metric metric-score"><span>SCORE</span><strong id="scoreValue">000000</strong></div>
             <div class="metric"><span>TIME</span><strong id="timeValue">60.0</strong><i>s</i></div>
-            <div class="metric"><span>ROUND</span><strong id="roundValue">00</strong><i>/08</i></div>
+            <div class="metric metric-stage"><span>STAGE</span><strong id="stageValue">01</strong><i>/04</i><b id="stageMeta">SYNC · ×1.00</b></div>
             <div class="metric"><span>STREAK</span><strong id="comboValue">x0</strong></div>
           </div>
 
@@ -54,6 +51,11 @@
             <div class="canvas-corner corner-tl"></div>
             <div class="canvas-corner corner-br"></div>
             <div class="toast" id="toast" role="status" aria-live="assertive"></div>
+            <div class="stage-banner" id="stageBanner" role="status" aria-live="assertive">
+              <span id="stageBannerKicker">STAGE 01 / 04</span>
+              <strong id="stageBannerTitle">SYNC</strong>
+              <span id="stageBannerCopy">LEARN THE SIGNAL · SCORE ×1.00</span>
+            </div>
             <div class="game-overlay" id="gameOverlay">
               <div class="overlay-mark">◒</div>
               <h3 id="overlayTitle">RULESHIFT</h3>

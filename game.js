@@ -7,7 +7,8 @@ const arena = { x: 34, y: 30, w: W - 68, h: H - 60 };
 const $ = (id) => document.getElementById(id);
 const scoreValue = $("scoreValue");
 const timeValue = $("timeValue");
-const roundValue = $("roundValue");
+const stageValue = $("stageValue");
+const stageMeta = $("stageMeta");
 const comboValue = $("comboValue");
 const ruleIndex = $("ruleIndex");
 const ruleTag = $("ruleTag");
@@ -16,6 +17,10 @@ const ruleCopy = $("ruleCopy");
 const ruleProgress = $("ruleProgress");
 const ruleStrip = $("ruleStrip");
 const toast = $("toast");
+const stageBanner = $("stageBanner");
+const stageBannerKicker = $("stageBannerKicker");
+const stageBannerTitle = $("stageBannerTitle");
+const stageBannerCopy = $("stageBannerCopy");
 const overlay = $("gameOverlay");
 const overlayTitle = $("overlayTitle");
 const overlayCopy = $("overlayCopy");
@@ -29,7 +34,9 @@ const touchDirectionButtons = [...document.querySelectorAll("[data-key]")];
 
 const RUN_DURATION = 60;
 const RULE_DURATION = 8;
+const STAGE_DURATION = 15;
 const DASH_COOLDOWN = 1.1;
+const BLOOM_ORB_BONUS_CAP = 3;
 
 function readStorage(key, fallback) {
   try { return localStorage.getItem(key) ?? fallback; }
@@ -81,6 +88,10 @@ function playSound(name) {
   } else if (name === "shift") {
     tone(180, .1, "sawtooth", .025);
     tone(320, .14, "sawtooth", .025, .07);
+  } else if (name === "stage") {
+    tone(150, .12, "triangle", .03);
+    tone(300, .14, "triangle", .035, .09);
+    tone(600, .18, "sine", .03, .19);
   } else if (name === "collect") {
     tone(620, .07, "sine", .035);
   } else if (name === "gold") {
@@ -108,6 +119,13 @@ const RULES = [
   { id: "gravity", category: "physics", tag: "MOTION / HEAVY", title: "HEAVY HAND", copy: "관성이 커진다. 멈추는 것도 기술이다.", color: "#d7ff52", accent: "#192514" },
 ];
 
+const STAGES = [
+  { name: "SYNC", cue: "LEARN THE SIGNAL", scoreMultiplier: 1, enemyCount: 4, enemySpeed: .82, hitPenalty: 60, orbCount: 12, color: "#77e5ff" },
+  { name: "PRESSURE", cue: "KEEP YOUR LINE", scoreMultiplier: 1.25, enemyCount: 5, enemySpeed: 1, hitPenalty: 80, orbCount: 10, color: "#d7ff52" },
+  { name: "OVERLOAD", cue: "MAKE EVERY ORB COUNT", scoreMultiplier: 1.55, enemyCount: 6, enemySpeed: 1.16, hitPenalty: 105, orbCount: 8, color: "#ffb36b" },
+  { name: "BREAKPOINT", cue: "HOLD THE IMPOSSIBLE", scoreMultiplier: 2, enemyCount: 7, enemySpeed: 1.32, hitPenalty: 130, orbCount: 6, color: "#ff7653" },
+];
+
 const state = {
   mode: "ready",
   score: 0,
@@ -115,6 +133,9 @@ const state = {
   time: RUN_DURATION,
   elapsed: 0,
   round: 0,
+  stageIndex: 0,
+  stage: STAGES[0],
+  stageBannerTimer: 0,
   combo: 0,
   rule: null,
   deck: [],
@@ -158,13 +179,44 @@ function createOrb() {
   return { x: point.x, y: point.y, r: gold ? 9 : 7, gold, pulse: Math.random() * Math.PI * 2 };
 }
 
-function createEnemy(index) {
+function createEnemy(index, spawnDelay = 0) {
   const side = index % 4;
   const point = side === 0 ? { x: arena.x + 26, y: rand(arena.y + 40, arena.y + arena.h - 40) }
     : side === 1 ? { x: arena.x + arena.w - 26, y: rand(arena.y + 40, arena.y + arena.h - 40) }
       : side === 2 ? { x: rand(arena.x + 40, arena.x + arena.w - 40), y: arena.y + 26 }
         : { x: rand(arena.x + 40, arena.x + arena.w - 40), y: arena.y + arena.h - 26 };
-  return { x: point.x, y: point.y, r: 11, vx: rand(-1, 1), vy: rand(-1, 1), phase: Math.random() * Math.PI * 2, seed: index };
+  return { x: point.x, y: point.y, r: 11, vx: rand(-1, 1), vy: rand(-1, 1), phase: Math.random() * Math.PI * 2, seed: index, spawnDelay };
+}
+
+function stageMultiplierLabel() { return `×${state.stage.scoreMultiplier.toFixed(2)}`; }
+
+function resizeWorldForStage() {
+  state.orbs = state.orbs.slice(0, state.stage.orbCount);
+  while (state.orbs.length < state.stage.orbCount) state.orbs.push(createOrb());
+  while (state.enemies.length < state.stage.enemyCount) state.enemies.push(createEnemy(state.enemies.length, .75));
+  state.enemies = state.enemies.slice(0, state.stage.enemyCount);
+}
+
+function showStageBanner() {
+  const stageNumber = String(state.stageIndex + 1).padStart(2, "0");
+  stageBannerKicker.textContent = `STAGE ${stageNumber} / 04`;
+  stageBannerTitle.textContent = state.stage.name;
+  stageBannerCopy.textContent = `${state.stage.cue} · SCORE ${stageMultiplierLabel()}`;
+  stageBanner.style.setProperty("--stage-color", state.stage.color);
+  stageBanner.classList.add("is-visible");
+  state.stageBannerTimer = 1.7;
+}
+
+function applyStage(index, isStarting = false) {
+  state.stageIndex = index;
+  state.stage = STAGES[index];
+  resizeWorldForStage();
+  state.flash = 1;
+  state.shake = isStarting ? 3 : 7;
+  state.player.invuln = Math.max(state.player.invuln, .9);
+  showStageBanner();
+  burst(state.player.x, state.player.y, state.stage.color, isStarting ? 12 : 22);
+  if (!isStarting) playSound("stage");
 }
 
 function resetWorld() {
@@ -172,6 +224,9 @@ function resetWorld() {
   state.time = RUN_DURATION;
   state.elapsed = 0;
   state.round = 0;
+  state.stageIndex = 0;
+  state.stage = STAGES[0];
+  state.stageBannerTimer = 0;
   state.combo = 0;
   state.rule = null;
   state.deck = [];
@@ -182,8 +237,8 @@ function resetWorld() {
   state.toastTimer = 0;
   state.dashCooldown = 0;
   state.player = { x: W / 2, y: H / 2, r: 14, vx: 0, vy: 0, invuln: 0, trail: [] };
-  state.orbs = Array.from({ length: 11 }, createOrb);
-  state.enemies = Array.from({ length: 5 }, (_, index) => createEnemy(index));
+  state.orbs = Array.from({ length: state.stage.orbCount }, createOrb);
+  state.enemies = Array.from({ length: state.stage.enemyCount }, (_, index) => createEnemy(index));
   state.particles = [];
   state.floatingTexts = [];
   updateHud();
@@ -219,7 +274,8 @@ function nextRule() {
 function updateHud() {
   scoreValue.textContent = String(Math.max(0, Math.floor(state.score))).padStart(6, "0");
   timeValue.textContent = state.time.toFixed(1).padStart(4, "0");
-  roundValue.textContent = String(state.round).padStart(2, "0");
+  stageValue.textContent = String(state.stageIndex + 1).padStart(2, "0");
+  stageMeta.textContent = `${state.stage.name} · ${stageMultiplierLabel()}`;
   comboValue.textContent = `x${state.combo}`;
   if (state.rule) {
     const secondsLeft = Math.max(0, state.nextRuleAt - state.elapsed);
@@ -275,6 +331,7 @@ function beginGame() {
   resetWorld();
   setMode("playing");
   playSound("start");
+  applyStage(0, true);
   nextRule();
   canvas.focus();
   state.last = performance.now();
@@ -320,25 +377,25 @@ function getInput() {
 function hitPlayer() {
   if (state.player.invuln > 0) return;
   state.player.invuln = 1.05;
-  state.score = Math.max(0, state.score - 80);
+  state.score = Math.max(0, state.score - state.stage.hitPenalty);
   state.combo = 0;
   state.shake = 12;
-  showToast("SIGNAL LOST  /  -80");
+  showToast(`SIGNAL LOST  /  -${state.stage.hitPenalty}`);
   burst(state.player.x, state.player.y, "#ff7653", 18);
-  addFloatingText(state.player.x, state.player.y - 24, "−80", "#ff7653");
+  addFloatingText(state.player.x, state.player.y - 24, `−${state.stage.hitPenalty}`, "#ff7653");
   playSound("hit");
 }
 
 function collectOrb(orb) {
   const base = orb.gold ? 100 : 40;
-  const multiplier = state.rule?.id === "gold" ? 3 : 1;
-  const gained = base * multiplier + state.combo * 3;
+  const ruleMultiplier = state.rule?.id === "gold" ? 3 : 1;
+  const gained = Math.round((base * ruleMultiplier + state.combo * 3) * state.stage.scoreMultiplier);
   state.score += gained;
   state.combo = Math.min(99, state.combo + 1);
   burst(orb.x, orb.y, orb.gold ? "#ffd765" : "#77e5ff", orb.gold ? 12 : 7);
-  addFloatingText(orb.x, orb.y - 15, `+${gained}`, orb.gold ? "#ffd765" : "#77e5ff");
+  addFloatingText(orb.x, orb.y - 15, `+${gained} ${stageMultiplierLabel()}`, orb.gold ? "#ffd765" : "#77e5ff");
   playSound(orb.gold ? "gold" : "collect");
-  if (state.rule?.id === "bloom") {
+  if (state.rule?.id === "bloom" && state.orbs.length < state.stage.orbCount + BLOOM_ORB_BONUS_CAP) {
     state.orbs.push(createOrb());
   }
   Object.assign(orb, createOrb());
@@ -368,15 +425,21 @@ function burst(x, y, color, amount) {
 }
 
 function update(dt) {
-  state.elapsed += dt;
-  state.time = Math.max(0, RUN_DURATION - state.elapsed);
+  const remaining = Math.max(0, RUN_DURATION - state.elapsed);
+  dt = clamp(dt, 0, remaining);
+  state.elapsed = clamp(state.elapsed + dt, 0, RUN_DURATION);
+  state.time = RUN_DURATION - state.elapsed;
   state.dashCooldown = Math.max(0, state.dashCooldown - dt);
   state.player.invuln = Math.max(0, state.player.invuln - dt);
+  state.stageBannerTimer = Math.max(0, state.stageBannerTimer - dt);
+  if (state.stageBannerTimer <= 0) stageBanner.classList.remove("is-visible");
   state.flash = Math.max(0, state.flash - dt * 2.5);
   state.shake = Math.max(0, state.shake - dt * 18);
   state.toastTimer -= dt;
   if (state.toastTimer <= 0) toast.classList.remove("is-visible");
 
+  const nextStageIndex = clamp(Math.floor(state.elapsed / STAGE_DURATION), 0, STAGES.length - 1);
+  if (nextStageIndex !== state.stageIndex) applyStage(nextStageIndex);
   if (state.elapsed >= state.nextRuleAt) nextRule();
 
   const input = getInput();
@@ -398,14 +461,21 @@ function update(dt) {
 
   for (const enemy of state.enemies) {
     const angleToPlayer = Math.atan2(state.player.y - enemy.y, state.player.x - enemy.x);
-    const enemySpeed = 42 * (state.rule?.id === "overdrive" ? 1.3 : 1);
+    if (enemy.spawnDelay > 0) {
+      enemy.spawnDelay = Math.max(0, enemy.spawnDelay - dt);
+      continue;
+    }
+    const enemySpeed = 42 * state.stage.enemySpeed * (state.rule?.id === "overdrive" ? 1.3 : 1);
     if (state.rule?.id === "orbit") {
       enemy.phase += dt * .9;
-      const orbitAngle = Math.atan2(enemy.y - H / 2, enemy.x - W / 2) + dt * (.5 + enemy.seed * .04);
+      const orbitSpeed = state.stage.enemySpeed;
+      const orbitAngle = Math.atan2(enemy.y - H / 2, enemy.x - W / 2) + dt * (.5 + enemy.seed * .04) * orbitSpeed;
       const desiredX = W / 2 + Math.cos(orbitAngle) * (190 + enemy.seed * 18);
       const desiredY = H / 2 + Math.sin(orbitAngle) * (130 + enemy.seed * 13);
-      enemy.vx = lerp(enemy.vx, (desiredX - enemy.x) * .7, dt);
-      enemy.vy = lerp(enemy.vy, (desiredY - enemy.y) * .7, dt);
+      const orbitTrackingGain = .7 * orbitSpeed;
+      const orbitTrackingStep = clamp(dt * orbitSpeed, 0, 1);
+      enemy.vx = lerp(enemy.vx, (desiredX - enemy.x) * orbitTrackingGain, orbitTrackingStep);
+      enemy.vy = lerp(enemy.vy, (desiredY - enemy.y) * orbitTrackingGain, orbitTrackingStep);
     } else {
       enemy.vx = lerp(enemy.vx, Math.cos(angleToPlayer) * enemySpeed, dt * .45);
       enemy.vy = lerp(enemy.vy, Math.sin(angleToPlayer) * enemySpeed, dt * .45);
@@ -435,7 +505,7 @@ function update(dt) {
     label.life -= dt;
   }
   state.floatingTexts = state.floatingTexts.filter((label) => label.life > 0);
-  state.score += dt * 2;
+  state.score += dt * 2 * state.stage.scoreMultiplier;
   updateHud();
   if (state.time <= 0) finishGame();
 }
@@ -455,7 +525,7 @@ function drawBackground() {
   }
   ctx.restore();
   const glow = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, 500);
-  glow.addColorStop(0, `${state.rule?.color || "#d7ff52"}17`);
+  glow.addColorStop(0, `${state.stage.color}19`);
   glow.addColorStop(1, "transparent");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
@@ -510,7 +580,7 @@ function drawEnemy(enemy) {
   ctx.shadowBlur = state.rule?.id === "overdrive" ? 20 : 13;
   ctx.shadowColor = color;
   ctx.fillStyle = color;
-  ctx.globalAlpha = .92;
+  ctx.globalAlpha = enemy.spawnDelay > 0 ? .28 : .92;
   ctx.beginPath();
   ctx.moveTo(enemy.r * 1.35, 0);
   ctx.lineTo(-enemy.r * .85, enemy.r * .9);
@@ -562,7 +632,7 @@ function drawParticles() {
 function drawFloatingTexts() {
   ctx.save();
   ctx.textAlign = "center";
-  ctx.font = "500 13px 'DM Mono', monospace";
+  ctx.font = "500 13px ui-monospace, monospace";
   for (const label of state.floatingTexts) {
     ctx.globalAlpha = clamp(label.life / label.maxLife, 0, 1);
     ctx.fillStyle = label.color;
@@ -576,7 +646,7 @@ function drawFloatingTexts() {
 function drawCanvasLabels() {
   ctx.save();
   ctx.fillStyle = "rgba(241,240,232,.52)";
-  ctx.font = "10px 'DM Mono', monospace";
+  ctx.font = "10px ui-monospace, monospace";
   if (state.mode === "playing" && state.nextRuleAt - state.elapsed < 2) {
     ctx.fillStyle = state.rule?.color || "#d7ff52";
     ctx.fillText("SHIFT IMMINENT", W / 2 - 44, arena.y + arena.h - 17);
@@ -608,7 +678,7 @@ function draw(now) {
 }
 
 function loop(now) {
-  const dt = Math.min(.04, (now - state.last) / 1000);
+  const dt = clamp((now - state.last) / 1000, 0, .04);
   state.last = now;
   if (state.mode === "playing") update(dt);
   draw(now);
