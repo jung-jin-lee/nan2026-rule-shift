@@ -23,6 +23,81 @@ const overlayTitle = $("overlayTitle");
 const overlayCopy = $("overlayCopy");
 const startButton = $("startButton");
 const pauseButton = $("pauseButton");
+const dashMeter = $("dashMeter");
+const dashStatus = $("dashStatus");
+const soundButton = $("soundButton");
+const touchDash = $("touchDash");
+const touchDirectionButtons = [...document.querySelectorAll("[data-key]")];
+
+const RUN_DURATION = 60;
+const RULE_DURATION = 8;
+const DASH_COOLDOWN = 1.1;
+
+function readStorage(key, fallback) {
+  try { return localStorage.getItem(key) ?? fallback; }
+  catch { return fallback; }
+}
+
+function writeStorage(key, value) {
+  try { localStorage.setItem(key, value); }
+  catch { /* Private browsing or file previews may disable storage. */ }
+}
+
+const audio = {
+  enabled: readStorage("ruleshift:sound", "on") !== "off",
+  context: null,
+};
+
+function ensureAudio() {
+  if (!audio.enabled) return null;
+  if (!audio.context) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return null;
+    audio.context = new AudioContext();
+  }
+  if (audio.context.state === "suspended") audio.context.resume();
+  return audio.context;
+}
+
+function tone(frequency, duration = .08, type = "sine", volume = .035, delay = 0) {
+  const audioContext = ensureAudio();
+  if (!audioContext) return;
+  const startAt = audioContext.currentTime + delay;
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, startAt);
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(volume, startAt + .008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+  oscillator.connect(gain).connect(audioContext.destination);
+  oscillator.start(startAt);
+  oscillator.stop(startAt + duration + .02);
+}
+
+function playSound(name) {
+  if (!audio.enabled) return;
+  if (name === "start") {
+    tone(220, .08, "square", .025);
+    tone(440, .12, "square", .025, .08);
+  } else if (name === "shift") {
+    tone(180, .1, "sawtooth", .025);
+    tone(320, .14, "sawtooth", .025, .07);
+  } else if (name === "collect") {
+    tone(620, .07, "sine", .035);
+  } else if (name === "gold") {
+    tone(740, .08, "sine", .04);
+    tone(980, .1, "sine", .035, .055);
+  } else if (name === "dash") {
+    tone(120, .08, "sawtooth", .028);
+  } else if (name === "hit") {
+    tone(82, .18, "square", .045);
+  } else if (name === "finish") {
+    tone(330, .12, "triangle", .03);
+    tone(440, .16, "triangle", .03, .1);
+    tone(660, .22, "triangle", .03, .2);
+  }
+}
 
 const RULES = [
   { id: "mirror", category: "movement", tag: "INPUT / FLIP", title: "MIRROR MODE", copy: "왼쪽과 오른쪽의 감각이 뒤집힌다.", color: "#d7ff52", accent: "#192514" },
@@ -38,7 +113,8 @@ const RULES = [
 const state = {
   mode: "ready",
   score: 0,
-  time: 60,
+  bestScore: Number.parseInt(readStorage("ruleshift:best", "0"), 10) || 0,
+  time: RUN_DURATION,
   elapsed: 0,
   round: 0,
   combo: 0,
@@ -54,6 +130,7 @@ const state = {
   orbs: [],
   enemies: [],
   particles: [],
+  floatingTexts: [],
   last: performance.now(),
 };
 
@@ -94,7 +171,7 @@ function createEnemy(index) {
 
 function resetWorld() {
   state.score = 0;
-  state.time = 60;
+  state.time = RUN_DURATION;
   state.elapsed = 0;
   state.round = 0;
   state.combo = 0;
@@ -110,13 +187,14 @@ function resetWorld() {
   state.orbs = Array.from({ length: 11 }, createOrb);
   state.enemies = Array.from({ length: 5 }, (_, index) => createEnemy(index));
   state.particles = [];
+  state.floatingTexts = [];
   updateHud();
 }
 
 function drawRule(rule) {
   state.rule = rule;
   state.round += 1;
-  state.nextRuleAt = state.elapsed + 8;
+  state.nextRuleAt = state.elapsed + RULE_DURATION;
   state.flash = 1;
   state.shake = 4;
   state.recentCategories.push(rule.category);
@@ -130,6 +208,7 @@ function drawRule(rule) {
   systemText.textContent = "RULE SHIFT DETECTED";
   showToast(`${rule.title}  /  ${rule.copy}`);
   burst(state.player.x, state.player.y, rule.color, 22);
+  playSound("shift");
 }
 
 function nextRule() {
@@ -146,10 +225,17 @@ function updateHud() {
   roundValue.textContent = String(state.round).padStart(2, "0");
   comboValue.textContent = `x${state.combo}`;
   if (state.rule) {
-    const remaining = clamp((state.nextRuleAt - state.elapsed) / 8, 0, 1);
-    ruleProgress.style.transform = `rotate(${remaining * 360}deg)`;
+    const secondsLeft = Math.max(0, state.nextRuleAt - state.elapsed);
+    const remaining = clamp(secondsLeft / RULE_DURATION, 0, 1);
+    ruleProgress.textContent = String(Math.ceil(secondsLeft));
     ruleProgress.parentElement.style.background = `conic-gradient(${state.rule.color} ${remaining * 360}deg, transparent 0deg)`;
   }
+  const dashReadyRatio = 1 - clamp(state.dashCooldown / DASH_COOLDOWN, 0, 1);
+  dashMeter.style.transform = `scaleX(${dashReadyRatio})`;
+  const dashReady = state.dashCooldown <= .01;
+  dashStatus.textContent = dashReady ? "DASH READY" : `DASH ${state.dashCooldown.toFixed(1)}s`;
+  dashStatus.parentElement.classList.toggle("is-ready", dashReady);
+  touchDash.disabled = state.mode !== "playing" || !dashReady;
 }
 
 function showToast(message) {
@@ -166,7 +252,9 @@ function setMode(mode) {
   const isPaused = mode === "paused";
   overlay.classList.toggle("is-hidden", mode === "playing");
   pauseButton.disabled = mode !== "playing" && !isPaused;
-  pauseButton.textContent = isPaused ? "RESUME Ⅱ" : "PAUSE Ⅱ";
+  touchDirectionButtons.forEach((button) => { button.disabled = mode !== "playing"; });
+  pauseButton.innerHTML = isPaused ? "RESUME <span>▶</span>" : "PAUSE <span>Ⅱ</span>";
+  touchDash.disabled = mode !== "playing" || state.dashCooldown > 0;
   if (isReady) {
     overlayKicker.textContent = "STUDIO 07 / LIVE SYSTEM";
     overlayTitle.textContent = "RULESHIFT";
@@ -180,17 +268,22 @@ function setMode(mode) {
     startButton.innerHTML = "<span>RESUME RUN</span><b>↗</b>";
     systemText.textContent = "RUN PAUSED";
   } else if (mode === "over") {
+    const finalScore = Math.floor(state.score);
+    const rank = finalScore >= 1800 ? "S" : finalScore >= 1200 ? "A" : finalScore >= 700 ? "B" : finalScore >= 300 ? "C" : "D";
     overlayKicker.textContent = "RUN COMPLETE / STUDIO 07";
-    overlayTitle.textContent = "SHIFT COMPLETE";
-    overlayCopy.innerHTML = `최종 점수 <b class="overlay-score">${String(Math.floor(state.score)).padStart(6, "0")}</b><br />다음 판에서는 더 오래 버텨라.`;
+    overlayTitle.textContent = `SHIFT RANK ${rank}`;
+    overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> · BEST ${String(state.bestScore).padStart(6, "0")}<br />다음 판에서는 더 높은 랭크에 도전하라.`;
     startButton.innerHTML = "<span>RUN IT BACK</span><b>↗</b>";
     systemText.textContent = "RUN COMPLETE";
   }
+  updateHud();
 }
 
 function beginGame() {
+  ensureAudio();
   resetWorld();
   setMode("playing");
+  playSound("start");
   nextRule();
   canvas.focus();
   state.last = performance.now();
@@ -206,13 +299,19 @@ function togglePause() {
 
 function dash() {
   if (state.mode !== "playing" || state.dashCooldown > 0) return;
-  const input = getInput();
-  if (input.x === 0 && input.y === 0) return;
+  let input = getInput();
+  if (input.x === 0 && input.y === 0) {
+    const velocity = Math.hypot(state.player.vx, state.player.vy);
+    if (velocity < 12) return;
+    input = { x: state.player.vx / velocity, y: state.player.vy / velocity };
+  }
   state.player.vx += input.x * 270;
   state.player.vy += input.y * 270;
   state.player.invuln = Math.max(state.player.invuln, .35);
-  state.dashCooldown = 1.1;
+  state.dashCooldown = DASH_COOLDOWN;
   burst(state.player.x, state.player.y, "#d7ff52", 10);
+  addFloatingText(state.player.x, state.player.y - 22, "DASH", "#d7ff52");
+  playSound("dash");
 }
 
 function getInput() {
@@ -235,18 +334,38 @@ function hitPlayer() {
   state.shake = 12;
   showToast("SIGNAL LOST  /  -80");
   burst(state.player.x, state.player.y, "#ff7653", 18);
+  addFloatingText(state.player.x, state.player.y - 24, "−80", "#ff7653");
+  playSound("hit");
 }
 
 function collectOrb(orb) {
   const base = orb.gold ? 100 : 40;
   const multiplier = state.rule?.id === "gold" ? 3 : 1;
-  state.score += base * multiplier + state.combo * 3;
+  const gained = base * multiplier + state.combo * 3;
+  state.score += gained;
   state.combo = Math.min(99, state.combo + 1);
   burst(orb.x, orb.y, orb.gold ? "#ffd765" : "#77e5ff", orb.gold ? 12 : 7);
+  addFloatingText(orb.x, orb.y - 15, `+${gained}`, orb.gold ? "#ffd765" : "#77e5ff");
+  playSound(orb.gold ? "gold" : "collect");
   if (state.rule?.id === "bloom") {
     state.orbs.push(createOrb());
   }
   Object.assign(orb, createOrb());
+}
+
+function addFloatingText(x, y, text, color) {
+  state.floatingTexts.push({ x, y, text, color, life: .85, maxLife: .85 });
+}
+
+function finishGame() {
+  if (state.mode !== "playing") return;
+  const finalScore = Math.floor(state.score);
+  if (finalScore > state.bestScore) {
+    state.bestScore = finalScore;
+    writeStorage("ruleshift:best", String(finalScore));
+  }
+  playSound("finish");
+  setMode("over");
 }
 
 function burst(x, y, color, amount) {
@@ -259,7 +378,7 @@ function burst(x, y, color, amount) {
 
 function update(dt) {
   state.elapsed += dt;
-  state.time = Math.max(0, 60 - state.elapsed);
+  state.time = Math.max(0, RUN_DURATION - state.elapsed);
   state.dashCooldown = Math.max(0, state.dashCooldown - dt);
   state.player.invuln = Math.max(0, state.player.invuln - dt);
   state.flash = Math.max(0, state.flash - dt * 2.5);
@@ -320,9 +439,14 @@ function update(dt) {
     particle.life -= dt;
   }
   state.particles = state.particles.filter((particle) => particle.life > 0);
+  for (const label of state.floatingTexts) {
+    label.y -= dt * 30;
+    label.life -= dt;
+  }
+  state.floatingTexts = state.floatingTexts.filter((label) => label.life > 0);
   state.score += dt * 2;
   updateHud();
-  if (state.time <= 0) setMode("over");
+  if (state.time <= 0) finishGame();
 }
 
 function drawBackground() {
@@ -361,9 +485,9 @@ function drawArena() {
     ctx.strokeRect(arena.x + 10, arena.y + 10, arena.w - 20, arena.h - 20);
   }
   if (state.rule?.id === "quiet") {
-    const vignette = ctx.createRadialGradient(W / 2, H / 2, 100, W / 2, H / 2, 490);
+    const vignette = ctx.createRadialGradient(state.player.x, state.player.y, 75, state.player.x, state.player.y, 260);
     vignette.addColorStop(0, "transparent");
-    vignette.addColorStop(1, "rgba(4,5,8,.7)");
+    vignette.addColorStop(1, "rgba(4,5,8,.82)");
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, W, H);
   }
@@ -388,17 +512,26 @@ function drawOrb(orb) {
 }
 
 function drawEnemy(enemy) {
-  const color = state.rule?.id === "overdrive" ? "#ff7653" : "#eeeff0";
+  const color = state.rule?.id === "overdrive" ? "#ff4f32" : "#ff7653";
   ctx.save();
   ctx.translate(enemy.x, enemy.y);
-  ctx.rotate(Math.atan2(enemy.vy, enemy.vx) + Math.PI / 4);
-  ctx.shadowBlur = 12;
+  ctx.rotate(Math.atan2(enemy.vy, enemy.vx));
+  ctx.shadowBlur = state.rule?.id === "overdrive" ? 20 : 13;
   ctx.shadowColor = color;
   ctx.fillStyle = color;
-  ctx.globalAlpha = .84;
-  ctx.fillRect(-enemy.r * .7, -enemy.r * .7, enemy.r * 1.4, enemy.r * 1.4);
+  ctx.globalAlpha = .92;
+  ctx.beginPath();
+  ctx.moveTo(enemy.r * 1.35, 0);
+  ctx.lineTo(-enemy.r * .85, enemy.r * .9);
+  ctx.lineTo(-enemy.r * .4, 0);
+  ctx.lineTo(-enemy.r * .85, -enemy.r * .9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,.5)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
   ctx.fillStyle = "#0c1019";
-  ctx.fillRect(-2, -2, 4, 4);
+  ctx.beginPath(); ctx.arc(2, 0, 2.8, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
 
@@ -435,11 +568,25 @@ function drawParticles() {
   }
 }
 
+function drawFloatingTexts() {
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.font = "500 13px 'DM Mono', monospace";
+  for (const label of state.floatingTexts) {
+    ctx.globalAlpha = clamp(label.life / label.maxLife, 0, 1);
+    ctx.fillStyle = label.color;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = label.color;
+    ctx.fillText(label.text, label.x, label.y);
+  }
+  ctx.restore();
+}
+
 function drawCanvasLabels() {
   ctx.save();
   ctx.fillStyle = "rgba(241,240,232,.52)";
   ctx.font = "10px 'DM Mono', monospace";
-  ctx.fillText("LIVE / 07", arena.x + 17, arena.y + 28);
+  ctx.fillText("LIVE / 08", arena.x + 17, arena.y + 28);
   ctx.fillText("NO PATTERN DETECTED", arena.x + arena.w - 141, arena.y + 28);
   if (state.mode === "playing" && state.nextRuleAt - state.elapsed < 2) {
     ctx.fillStyle = state.rule?.color || "#d7ff52";
@@ -457,6 +604,7 @@ function draw(now) {
   for (const enemy of state.enemies) drawEnemy(enemy);
   drawPlayer();
   drawParticles();
+  drawFloatingTexts();
   drawCanvasLabels();
   if (state.flash > 0) {
     ctx.fillStyle = `${state.rule?.color || "#d7ff52"}${Math.floor(state.flash * 28).toString(16).padStart(2, "0")}`;
@@ -481,19 +629,65 @@ function loop(now) {
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) event.preventDefault();
-  if (key === "p") { togglePause(); return; }
+  if ((key === "enter" || key === "return") && (state.mode === "ready" || state.mode === "over")) { beginGame(); return; }
+  if (key === "p" || key === "escape") { togglePause(); return; }
   if (key === " ") { dash(); return; }
   keys.add(key);
 });
 
 window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+window.addEventListener("blur", () => {
+  keys.clear();
+  if (state.mode === "playing") setMode("paused");
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && state.mode === "playing") {
+    keys.clear();
+    setMode("paused");
+  }
+});
 startButton.addEventListener("click", () => {
   if (state.mode === "paused") togglePause();
   else beginGame();
 });
 pauseButton.addEventListener("click", togglePause);
 canvas.addEventListener("click", () => canvas.focus());
+soundButton.addEventListener("click", () => {
+  audio.enabled = !audio.enabled;
+  writeStorage("ruleshift:sound", audio.enabled ? "on" : "off");
+  soundButton.setAttribute("aria-pressed", String(audio.enabled));
+  soundButton.innerHTML = `${audio.enabled ? "SOUND ON" : "SOUND OFF"} <span>${audio.enabled ? "♪" : "×"}</span>`;
+  if (audio.enabled) {
+    ensureAudio();
+    tone(520, .08, "sine", .03);
+  }
+});
+
+for (const button of touchDirectionButtons) {
+  const key = button.dataset.key;
+  const release = () => {
+    keys.delete(key);
+    button.classList.remove("is-active");
+  };
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    try { button.setPointerCapture?.(event.pointerId); }
+    catch { /* Synthetic and assistive pointer events may not own a capture target. */ }
+    keys.add(key);
+    button.classList.add("is-active");
+  });
+  button.addEventListener("pointerup", release);
+  button.addEventListener("pointercancel", release);
+  button.addEventListener("lostpointercapture", release);
+}
+
+touchDash.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  dash();
+});
 
 resetWorld();
+soundButton.setAttribute("aria-pressed", String(audio.enabled));
+soundButton.innerHTML = `${audio.enabled ? "SOUND ON" : "SOUND OFF"} <span>${audio.enabled ? "♪" : "×"}</span>`;
 setMode("ready");
 requestAnimationFrame(loop);
