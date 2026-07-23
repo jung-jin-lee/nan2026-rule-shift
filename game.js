@@ -470,13 +470,15 @@ function showToast(message) {
 
 function renderOverlay() {
   const selected = STAGES[state.selectedStageIndex];
+  const selectedBest = String(state.progress.stageBest[state.selectedStageIndex]).padStart(4, "0");
+  const selectedStageDetail = `${selected.cue}<br />TARGET <b class="overlay-score">${stageTargetLabel(selected)}</b> · BEST ${selectedBest} · SCORE ${selected.scoreMultiplier.toFixed(2)}×`;
   if (state.mode === "ready") {
     overlayTitle.textContent = `STAGE ${stageNumber(state.selectedStageIndex)} · ${selected.name}`;
-    overlayCopy.innerHTML = `60초 동안 신호를 버텨라.<br />TARGET <b class="overlay-score">${stageTargetLabel(selected)}</b> · SCORE ${selected.scoreMultiplier.toFixed(2)}×`;
+    overlayCopy.innerHTML = selectedStageDetail;
     startButton.innerHTML = `<span>START STAGE ${stageNumber(state.selectedStageIndex)}</span><b>↗</b>`;
   } else if (state.mode === "paused") {
     overlayTitle.textContent = `STAGE ${stageNumber()} · PAUSED`;
-    overlayCopy.innerHTML = `${state.stage.name} · TARGET <b class="overlay-score">${stageTargetLabel()}</b><br />준비되면 60초 런을 이어간다.`;
+    overlayCopy.innerHTML = `${selectedStageDetail}<br />RUN PAUSED`;
     startButton.innerHTML = "<span>RESUME RUN</span><b>↗</b>";
   } else if (state.mode === "over" && state.result) {
     const resultStage = STAGES[state.result.stageIndex];
@@ -484,14 +486,14 @@ function renderOverlay() {
     if (!state.result.cleared) {
       const missing = Math.max(0, resultStage.targetScore - finalScore);
       overlayTitle.textContent = `STAGE ${stageNumber(state.result.stageIndex)} · FAIL`;
-      overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> / TARGET ${stageTargetLabel(resultStage)}<br /><b>${String(missing).padStart(4, "0")}</b> points more. Retry this stage.`;
+      overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> / TARGET ${stageTargetLabel(resultStage)} · ${String(missing).padStart(4, "0")} LEFT<br />${selectedStageDetail}`;
     } else if (state.result.stageIndex === STAGES.length - 1) {
       overlayTitle.textContent = "ALL STAGES CLEAR";
-      overlayCopy.innerHTML = `STAGE 04 CLEAR · SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b><br />All four signals are open. Choose any cleared stage.`;
+      overlayCopy.innerHTML = `STAGE 04 CLEAR · SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b><br />${selectedStageDetail}`;
     } else {
       const nextStage = STAGES[state.selectedStageIndex];
       overlayTitle.textContent = `STAGE ${stageNumber(state.result.stageIndex)} · CLEAR`;
-      overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> / TARGET ${stageTargetLabel(resultStage)}<br />${state.result.newlyUnlocked ? `STAGE ${stageNumber(state.result.newlyUnlocked)} ${nextStage.name} OPEN` : `NEXT: STAGE ${stageNumber(state.selectedStageIndex)} ${nextStage.name}`}`;
+      overlayCopy.innerHTML = `SCORE <b class="overlay-score">${String(finalScore).padStart(6, "0")}</b> / TARGET ${stageTargetLabel(resultStage)}<br />${state.result.newlyUnlocked ? `STAGE ${stageNumber(state.result.newlyUnlocked)} ${nextStage.name} OPEN` : `NEXT: STAGE ${stageNumber(state.selectedStageIndex)} ${nextStage.name}`}<br />${selectedStageDetail}`;
     }
     startButton.innerHTML = `<span>PLAY STAGE ${stageNumber(state.selectedStageIndex)} · TARGET ${stageTargetLabel(selected)}</span><b>↗</b>`;
   }
@@ -502,8 +504,10 @@ function setMode(mode) {
   document.body.dataset.gameState = mode;
   canvas.dataset.gameState = mode;
   const isPaused = mode === "paused";
+  const showStageSelector = mode === "ready" || mode === "over";
   overlay.classList.toggle("is-hidden", mode === "playing");
-  stageSelector.hidden = mode === "playing" || isPaused;
+  stageSelector.hidden = !showStageSelector;
+  ruleStrip.hidden = !isPaused && mode !== "playing";
   pauseButton.disabled = mode !== "playing" && !isPaused;
   touchDirectionButtons.forEach((button) => { button.disabled = mode !== "playing"; });
   pauseButton.innerHTML = isPaused ? "RESUME <span>▶</span>" : "PAUSE <span>Ⅱ</span>";
