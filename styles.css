@@ -45,14 +45,14 @@ button, a { font: inherit; }
 button { cursor: pointer; }
 button:focus-visible, a:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
 
-.app-shell { width: min(1440px, calc(100% - 64px)); margin: 0 auto; padding: 28px 0 72px; }
+.app-shell { width: min(1440px, calc(100% - 64px)); margin: 0 auto; padding: 24px 0 32px; }
 
-.topbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--paper); text-decoration: none; font: 800 15px var(--font-display); letter-spacing: .08em; }
 .brand-symbol { display: grid; place-items: center; width: 27px; height: 27px; color: var(--ink); background: var(--lime); font-size: 18px; line-height: 1; transform: rotate(-12deg); }
 
-.hero-grid { display: grid; grid-template-columns: minmax(430px, .98fr) minmax(650px, 1.5fr); gap: clamp(36px, 4vw, 58px); align-items: center; padding: 64px 0 72px; }
+.hero-grid { display: grid; grid-template-columns: minmax(430px, .98fr) minmax(650px, 1.5fr); gap: clamp(36px, 4vw, 58px); align-items: center; padding: 32px 0; }
 .intro-panel { align-self: center; }
+.intro-brand { justify-self: start; margin-bottom: 34px; }
 .eyebrow { display: flex; align-items: center; gap: 9px; color: var(--lime); font: 500 10px var(--font-mono); letter-spacing: .16em; }
 .eyebrow-line { width: 22px; height: 1px; background: currentColor; }
 h1, h2, h3, p { margin: 0; }
@@ -146,17 +146,20 @@ h1 em { color: var(--lime); font-style: normal; }
 
 @media (max-width: 1180px) {
   .app-shell { width: min(100% - 34px, 820px); }
-  .hero-grid { grid-template-columns: 1fr; gap: 50px; padding-top: 58px; }
+  .hero-grid { grid-template-columns: 1fr; gap: 42px; padding: 32px 0; }
   .intro-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 0 34px; }
-  .intro-panel .eyebrow, .intro-panel h1, .intro-panel .intro-copy { grid-column: 1 / -1; }
+  .intro-panel .intro-brand, .intro-panel .eyebrow, .intro-panel h1, .intro-panel .intro-copy { grid-column: 1 / -1; }
 }
 
 @media (max-width: 640px) {
-  .app-shell { width: min(100% - 22px, 560px); padding-top: 16px; }
-  .hero-grid { padding: 36px 0 30px; }
-  .intro-panel { display: none; }
+  .app-shell { width: min(100% - 22px, 560px); padding: 12px 0 20px; }
+  .hero-grid { gap: 12px; padding: 0; }
+  .intro-panel { display: block; }
+  .intro-brand { margin: 0; }
+  .intro-panel .eyebrow, .intro-panel h1, .intro-panel .intro-copy { display: none; }
+  .brand { gap: 8px; font-size: 13px; }
+  .brand-symbol { width: 24px; height: 24px; font-size: 16px; }
   .game-card { padding: 15px; }
-  .hero-grid > .game-card { order: -1; }
   .dashboard { grid-template-columns: 1.5fr 1fr 1fr; }
   .metric { min-height: 59px; padding: 9px; }
   .metric-score { grid-column: 1 / -1; }
